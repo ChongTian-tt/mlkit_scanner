@@ -27,6 +27,15 @@ class _MyAppState extends State<MyApp> {
   var _cameraIndex = -1;
   var _cameraType = '';
   var _cameraPosition = '';
+  
+  // 扫描区域设置选项
+  final _cropAreaOptions = [
+    const CropRect(scaleHeight: 0.7, scaleWidth: 0.7), // 默认设置
+    const CropRect(scaleHeight: 0.5, scaleWidth: 0.5), // 小区域
+    const CropRect(scaleHeight: 0.9, scaleWidth: 0.9), // 大区域
+    const CropRect(scaleHeight: 0.7, scaleWidth: 0.3, offsetX: 0, offsetY: 0), // 窄区域
+  ];
+  var _currentCropAreaIndex = 0;
 
   void _setNextIosCamera() {
     _cameraIndex = (_cameraIndex + 1) % _iosCameras.length;
@@ -36,6 +45,18 @@ class _MyAppState extends State<MyApp> {
       _cameraType = _iosCameras[_cameraIndex].type.name;
       _cameraPosition = _iosCameras[_cameraIndex].position.name;
     });
+  }
+
+  // 切换扫描区域
+  void _setNextCropArea() {
+    _currentCropAreaIndex = (_currentCropAreaIndex + 1) % _cropAreaOptions.length;
+    _controller?.setCropArea(_cropAreaOptions[_currentCropAreaIndex]);
+    setState(() {});
+  }
+
+  String _getCropAreaDescription() {
+    final cropRect = _cropAreaOptions[_currentCropAreaIndex];
+    return '${(cropRect.scaleWidth * 100).toInt()}%x${(cropRect.scaleHeight * 100).toInt()}%';
   }
 
   void _resetZoom() {
@@ -182,6 +203,13 @@ class _MyAppState extends State<MyApp> {
                 _actualZoomIndex = _actualZoomIndex + 1 < _zoomValues.length ? _actualZoomIndex + 1 : 0;
                 _controller?.setZoom(_zoomValues[_actualZoomIndex]);
               },
+            ),
+            TextButton(
+              child: Text(
+                'Crop: ${_getCropAreaDescription()}',
+                textAlign: TextAlign.center,
+              ),
+              onPressed: _setNextCropArea,
             ),
             if (defaultTargetPlatform == TargetPlatform.iOS)
               TextButton(
