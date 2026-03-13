@@ -25,5 +25,8 @@ flutter:
         pluginClass: MlkitScannerPlugin
       ios:
         pluginClass: MlkitScannerPlugin
+      ohos:
+        package: com.dns_technologies.mlkit_scanner
+        pluginClass: MlkitScannerPlugin
 
 

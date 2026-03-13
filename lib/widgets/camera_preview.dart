@@ -59,6 +59,35 @@ class _CameraPreviewState extends State<CameraPreview> {
             },
           );
         }
+        if (defaultTargetPlatform == TargetPlatform.ohos) {
+          return PlatformViewLink(
+          viewType: 'mlkit/camera_preview',
+          surfaceFactory: (context, controller) {
+            return OhosViewSurface(
+              controller: controller as OhosViewController,
+              gestureRecognizers: const {},
+              hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+            );
+          },
+          onCreatePlatformView: (params) {
+            return PlatformViewsService.initSurfaceOhosView(
+              id: params.id,
+              viewType: 'mlkit/camera_preview',
+              layoutDirection: TextDirection.ltr,
+              creationParams: {
+                'width': constraints.maxWidth,
+                'height': constraints.maxHeight,
+              },
+              creationParamsCodec: const StandardMessageCodec(),
+            )
+              ..addOnPlatformViewCreatedListener((id) {
+                params.onPlatformViewCreated(id);
+                _onViewCreated(id);
+              })
+              ..create();
+          },
+          );
+        }
         return PlatformViewLink(
           viewType: 'mlkit/camera_preview',
           surfaceFactory: (context, controller) {

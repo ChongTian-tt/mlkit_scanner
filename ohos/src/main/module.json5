@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "mlkit_scanner",
+    "type": "har",
+    "deviceTypes": [
+      "default",
+      "tablet"
+    ],
+  }
+}
