@@ -168,6 +168,7 @@ class BarcodeScannerController {
   /// Detection happens every [delay] milliseconds, skipping frames during delay
   /// Can throw [PlatformException] if camera is not initialized.
   Future<void> startScan(int delay) async {
+    print("MlkitScannerPlugin Starting scan with delay: $delay");
     return _barcodeScannerState?._startScan(delay);
   }
 

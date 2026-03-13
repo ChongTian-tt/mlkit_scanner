@@ -133,7 +133,7 @@ export struct ScannerOverlay {
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
-      .hitTestBehavior(HitTestMode.Transparent)
+      .hitTestBehavior(HitTestMode.Block)
       .onReady(() => {
         this.isCanvasReady = true;
         this.onDraw();

@@ -35,57 +35,37 @@ export struct CameraPreviewComponent {
   @State hasPermission: boolean = false;
   @State surfaceId: string = "";
   // width/height for the surface component – OHOS API only accepts numbers
-  @State cameraWidth: number = 100; // full‑screen dims (required by XComponent)
-  @State cameraHeight: number = 100;
+  @State cameraWidth: number = 0; // full‑screen dims (required by XComponent)
+  @State cameraHeight: number = 0;
   @State offsetX: number = 0;
   @State offsetY: number = 0;
-  // actual screen dimensions (pixel to vp) for overlay calculations
-  @State screenWidth: number = 0;
-  @State screenHeight: number = 0;
   // crop rect state passed to overlay
   @State cropRectState: CropRect | null = null;
   // whether scanner is active (changes overlay border color)
   @State isActive: boolean = false;
+  private isWindowRegistered: boolean = false;
+  private isScanKitInitialized: boolean = false;
   private window = this.context.windowStage.getMainWindowSync();
 
   build() {
-      Stack() {
-        // camera surface
-        if (this.flutterMLKitScannerView && this.hasPermission) {
-          XComponent({
-            id: "componentId",
-            type: XComponentType.SURFACE,
-            controller: this.mXComponentController,
+    Stack() {
+      // camera surface
+      if (this.flutterMLKitScannerView && this.hasPermission) {
+        XComponent({
+          id: "componentId",
+          type: XComponentType.SURFACE,
+          controller: this.mXComponentController,
+        })
+          .onLoad(() => {
+            Log.i(TAG, "XComponent onLoad");
+            this.onLoadHandle();
           })
-            .onLoad(() => {
-              Log.i(TAG, "XComponent onLoad");
-              const scannerView = getCurrentMLKitScannerView();
-              if (scannerView) {
-                this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
-                scannerView.setSurfaceId(this.surfaceId);
-                Log.i(TAG, `XComponent onLoad successs ${this.surfaceId}`);
-                const options: scanBarcode.ScanOptions = {
-                  scanTypes: [scanCore.ScanType.ALL],
-                  enableMultiMode: false,
-                  enableAlbum: false,
-                };
-
-                const viewControl: customScan.ViewControl = {
-                  width: this.cameraWidth,
-                  height: this.cameraHeight,
-                  surfaceId: this.surfaceId
-                };
-                customScan.init(options);
-                customScan.start(viewControl);
-              }
-            })
-            .width(this.cameraWidth)
-            .height(this.cameraHeight)
-            .position({
-              x: this.offsetX,
-              y: this.offsetY,
-            });
-        }
+          .width(this.cameraWidth)
+          .height(this.cameraHeight)
+          .position({
+            x: this.offsetX,
+            y: this.offsetY,
+          });
         // scanner overlay on top of camera
         if (this.cropRectState) {
           ScannerOverlay({
@@ -94,60 +74,66 @@ export struct CameraPreviewComponent {
           })
         }
       }
-      .alignContent(Alignment.Bottom)
-      .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
-      .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
+    }
+    .alignContent(Alignment.Bottom)
+    .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
+    .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
   }
 
-  private async refreshPermissionState(scene: string): Promise<boolean> {
-    const scannerView = getCurrentMLKitScannerView();
+  private async refreshPermissionState(scene: string): Promise<void> {
     this.hasPermission = await PermissionsUtil.checkAndRequestCameraPermission(this.context);
-    if (scannerView) {
-      scannerView.userGrant = this.hasPermission;
+    this.flutterMLKitScannerView = getCurrentMLKitScannerView();
+    if (this.flutterMLKitScannerView) {
+      this.flutterMLKitScannerView.userGrant = this.hasPermission;
     }
     Log.i(TAG, `${scene} permission result: ${this.hasPermission}`);
-    return this.hasPermission;
   }
 
   async aboutToAppear(): Promise<void> {
     // keep reference for outside updates
     currentCameraPreview = this;
-    const scannerView = getCurrentMLKitScannerView();
+    this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
     Log.i(TAG, "aboutToAppear, cached userGrant=" + this.flutterMLKitScannerView?.userGrant);
-    if (scannerView && scannerView.methodResult) {
-      const initialCropRect = scannerView.initialScannerParameters?.initialCropRect;
-      if (initialCropRect) {
-        this.applyCropRect(initialCropRect);
-      }
+    Log.i(TAG, "aboutToAppear, cached methodResult=" + this.flutterMLKitScannerView?.methodResult);
+    this.registerWindow();
+    if (this.flutterMLKitScannerView && this.flutterMLKitScannerView.methodResult) {
+      await this.onInitCameraPreviewRequested();
+    }
+  }
 
-      if (!await this.refreshPermissionState('aboutToAppear')) {
-        scannerView.methodResult.error(PluginError.AuthorizationCameraError, 'Camera permission denied', null);
-        return;
-      }
-
-      try {
-        this.registerWindow();
-
-        Log.i(TAG, 'customScan.init success');
-        scannerView.setCameraInitialized(true);
-        scannerView.methodResult.success(true);
-      } catch (error) {
-        Log.e(TAG, "aboutToAppear customScan error: " + error);
-        scannerView.methodResult.error(PluginError.InitCameraError, 'customScan.init failed', JSON.stringify(error));
-      }
+  async onInitCameraPreviewRequested(): Promise<void> {
+    this.flutterMLKitScannerView = getCurrentMLKitScannerView();
+    if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult) {
+      return;
     }
 
+    await this.refreshPermissionState('initCameraPreview');
+    this.applyCropRect();
+    if (!this.hasPermission) {
+      this.flutterMLKitScannerView.methodResult.error(
+        PluginError.AuthorizationCameraError,
+        'Camera permission denied',
+        null,
+      );
+      this.flutterMLKitScannerView.methodResult = null;
+      return;
+    }
+
+    await this.tryInitScanKit('initCameraPreview');
   }
 
   // 窗口监听
   registerWindow() {
+    if (this.isWindowRegistered) {
+      return;
+    }
     try {
       const callback = async (windowEventType: window.WindowEventType) => {
         const scannerView = getCurrentMLKitScannerView();
         if (windowEventType === 1 && scannerView) {
-          const hasPermission = await this.refreshPermissionState('windowEvent');
-          if (!hasPermission) {
+          await this.refreshPermissionState('windowEvent');
+          if (!this.hasPermission) {
             this.isActive = false;
             return;
           }
@@ -156,20 +142,75 @@ export struct CameraPreviewComponent {
           }
         }
       }
-      this.window.on('windowEvent',callback);
+      this.window.on('windowEvent', callback);
+      this.isWindowRegistered = true;
     } catch (error) {
       Log.e(TAG, `Failed to unregister window focus listener: ${error}`);
+    }
+  }
+
+  async onLoadHandle(): Promise<void> {
+    this.flutterMLKitScannerView = getCurrentMLKitScannerView();
+    if (this.flutterMLKitScannerView) {
+      this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
+      this.flutterMLKitScannerView.setSurfaceId(this.surfaceId);
+      Log.i(TAG, `XComponent onLoad successs ${this.surfaceId}`);
+      await this.tryInitScanKit('onLoad');
+    }
+  }
+
+  private async tryInitScanKit(scene: string): Promise<void> {
+    this.flutterMLKitScannerView = getCurrentMLKitScannerView();
+    if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult) {
+      return;
+    }
+    if (!this.hasPermission) {
+      return;
+    }
+    if (!this.surfaceId) {
+      return;
+    }
+
+    if (this.isScanKitInitialized || this.flutterMLKitScannerView.isCameraInitialized) {
+      this.flutterMLKitScannerView.methodResult.success(true);
+      this.flutterMLKitScannerView.methodResult = null;
+      return;
+    }
+
+    const options: scanBarcode.ScanOptions = {
+      scanTypes: [scanCore.ScanType.ALL],
+      enableMultiMode: false,
+      enableAlbum: false,
+    };
+
+    try {
+      customScan.init(options);
+      this.isScanKitInitialized = true;
+      this.flutterMLKitScannerView.setCameraInitialized(true);
+      this.flutterMLKitScannerView.methodResult.success(true);
+      this.flutterMLKitScannerView.methodResult = null;
+      Log.i(TAG, `${scene} customScan.init success`);
+    } catch (error) {
+      Log.e(TAG, `${scene} customScan init error: ` + error);
+      this.flutterMLKitScannerView.methodResult?.error(
+        PluginError.InitCameraError,
+        'customScan.init failed',
+        JSON.stringify(error),
+      );
+      this.flutterMLKitScannerView.methodResult = null;
     }
   }
 
   // 移除窗口监听
   unRegisterWindow() {
     this.window.off('windowEvent')
+    this.isWindowRegistered = false;
   }
 
   aboutToDisappear() {
     Log.i(TAG, "aboutToDisappear");
     currentCameraPreview = null;
+    this.isScanKitInitialized = false;
     this.unRegisterWindow();
   }
 
@@ -181,19 +222,40 @@ export struct CameraPreviewComponent {
     this.isActive = active;
   }
 
+  applyPreviewConstraints(width: number, height: number): void {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      Log.e(TAG, 'applyPreviewConstraints ignored invalid size width=' + width + ', height=' + height);
+      return;
+    }
+
+    this.cameraWidth = width;
+    this.cameraHeight = height;
+    this.cameraWidth = width;
+    this.cameraHeight = height;
+    this.offsetX = 0;
+    this.offsetY = 0;
+
+    if (this.cropRectState) {
+      this.applyCropRect();
+    }
+  }
+
   // helper for external calls (e.g. setCropArea)
-  applyCropRect(rect: CropRect) {
-    // screen size may already be stored; if not, compute now
+  applyCropRect() {
+    // preview size may already be provided by Flutter constraints; fallback to display size
     try {
-      if (this.screenWidth === 0 || this.screenHeight === 0) {
-        this.screenWidth = this.getUIContext().px2vp(display.getDefaultDisplaySync().width);
-        this.screenHeight = this.getUIContext().px2vp(display.getDefaultDisplaySync().height);
+      if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.initialScannerParameters ||
+        !this.flutterMLKitScannerView.initialScannerParameters.initialCropRect) {
+        return;
       }
-      this.cameraWidth = this.screenWidth;
-      this.cameraHeight = this.screenHeight;
-      this.offsetX = (this.screenWidth / 2) * (1 + rect.offsetX) - this.cameraWidth / 2;
-      this.offsetY = (this.screenHeight / 2) * (1 + rect.offsetY) - this.cameraHeight / 2;
-      this.cropRectState = rect;
+      const initialCropRect = this.flutterMLKitScannerView.initialScannerParameters.initialCropRect;
+      if (this.cameraWidth === 0 || this.cameraHeight === 0) {
+        this.cameraWidth = this.getUIContext().px2vp(display.getDefaultDisplaySync().width);
+        this.cameraHeight = this.getUIContext().px2vp(display.getDefaultDisplaySync().height);
+      }
+      this.offsetX = (this.cameraWidth / 2) * (1 + initialCropRect.offsetX) - this.cameraWidth / 2;
+      this.offsetY = (this.cameraHeight / 2) * (1 + initialCropRect.offsetY) - this.cameraHeight / 2;
+      this.cropRectState = initialCropRect;
     } catch (error) {
       Log.e(TAG, "applyCropRect error: " + error);
     }
@@ -201,6 +263,6 @@ export struct CameraPreviewComponent {
 }
 
 // export accessor for view class
-export function getCurrentCameraPreview(): CameraPreviewComponent | null {
+export function getCurrentCameraPreviewComponent(): CameraPreviewComponent | null {
   return currentCameraPreview;
 }

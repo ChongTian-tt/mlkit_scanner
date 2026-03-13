@@ -1,18 +1,18 @@
 /*
  * Copyright (C) 2026 Huawei Device Co., Ltd.
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * Licensed under the Apache License, Version 2.0 (the 'License');
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an 'AS IS' BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { common } from "@kit.AbilityKit";
+import { common } from '@kit.AbilityKit';
 import {
   MethodCall,
   MethodResult,
@@ -20,26 +20,34 @@ import {
   MethodCallHandler,
   Log,
   MethodChannel,
-  BinaryMessenger
+  BinaryMessenger,
 } from '@ohos/flutter_ohos';
 import { Params } from '@ohos/flutter_ohos/src/main/ets/plugin/platform/PlatformView';
-import { CameraPreviewComponent, getCurrentCameraPreview } from "./CameraPreviewComponent";
-import { MLKitScannerOptions } from "./MLKitScannerOptions";
-import { CropRect, OhosScannerParameters, PluginConstants, PluginError } from "./PluginConstants";
-import { customScan, scanBarcode, scanCore } from "@kit.ScanKit";
+import { CameraPreviewComponent, getCurrentCameraPreviewComponent } from './CameraPreviewComponent';
+import { MLKitScannerOptions } from './MLKitScannerOptions';
+import { CropRect, OhosScannerParameters, PluginConstants, PluginError } from './PluginConstants';
+import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
+import { display } from '@kit.ArkUI';
+import { JSON } from '@kit.ArkTS';
 
 const TAG: string = 'MlkitScannerPlugin_FlutterMLKitScannerView';
 
 let flutterMLKitScannerView: MLKitScannerView;
 
-export class MLKitScannerView extends PlatformView implements MethodCallHandler, MethodCallHandler {
+export class MLKitScannerView extends PlatformView implements MethodCallHandler {
   private context: common.Context | null = null;
   public channel: MethodChannel | null = null;
   private viewId: number = 0;
   public isCameraInitialized: boolean = false;
   private surfaceId: string = '';
-  private previewSize: Size = { width: 100, height: 100 };
+  private previewSize: Size = { width: 0, height: 0 };
   private scanDelayMs: number = 100;
+  private readonly stopTimeoutMs: number = 1200;
+  private readonly previewRetryMs: number = 300;
+  private isPreviewRunning: boolean = false;
+  private isScanLoopRunning: boolean = false;
+  private isPreviewWarmupInFlight: boolean = false;
+  private consecutiveBusyErrors: number = 0;
   public isScan: boolean = false;
   public userGrant: boolean = false;
   public methodResult: MethodResult | null = null;
@@ -47,14 +55,21 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
 
   constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: ESObject) {
     super();
+    flutterMLKitScannerView = this;
     this.context = context;
     this.viewId = viewId;
     this.channel = new MethodChannel(messenger, PluginConstants.channelName);
     this.channel.setMethodCallHandler(this);
+    Log.i(TAG, 'CameraPreviewView constructor args: ' + JSON.stringify(args));
+
     this.previewSize = this.parsePreviewSize(args);
-    flutterMLKitScannerView = this;
-    Log.i(TAG, 'CameraPreviewView constructor created with viewId: ' + viewId + ', previewSize=' +
-    JSON.stringify(this.previewSize));
+    Log.i(
+      TAG,
+      'CameraPreviewView constructor created with viewId: ' +
+        viewId +
+        ', previewSize=' +
+      JSON.stringify(this.previewSize),
+    );
   }
 
   public getView(): WrappedBuilder<[Params]> {
@@ -64,11 +79,14 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
   setSurfaceId(surfaceId: string) {
     this.surfaceId = surfaceId;
     Log.i(TAG, 'setSurfaceId success: ' + this.surfaceId);
+    this.startPreviewWarmupIfNeeded();
   }
-
 
   setCameraInitialized(isCameraInitialized: boolean) {
     this.isCameraInitialized = isCameraInitialized;
+    if (isCameraInitialized) {
+      this.startPreviewWarmupIfNeeded();
+    }
   }
 
   private normalizeArgs(rawArgs: ESObject): Record<string, Object> {
@@ -89,7 +107,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
   }
 
   private parsePreviewSize(args: ESObject): Size {
-    const defaultSize: Size = { width: 100, height: 100 };
+    const defaultSize: Size = { width: 376, height: 200 };
     const normalizedArgs = this.normalizeArgs(args);
     if (Object.keys(normalizedArgs).length === 0) {
       return defaultSize;
@@ -106,10 +124,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
     };
   }
 
-  private convertArgsToRecord(rawArgsMap: ESObject): Record<string, Object> {
-    return this.normalizeArgs(rawArgsMap);
-  }
-
   private async waitDelay(ms: number): Promise<void> {
     if (ms <= 0) {
       return;
@@ -119,67 +133,185 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
     });
   }
 
-  private async runScanLoop(viewControl: customScan.ViewControl): Promise<void> {
-    while (this.isScan) {
-      const data: scanBarcode.ScanResult[] = await customScan.start(viewControl);
-      Log.i(TAG, 'customScan.start data: ' + JSON.stringify(data));
-      if (data && data.length > 0) {
-        const firstResult = data[0];
-        const rawValue = String(firstResult['originalValue'] ?? '');
-        if (rawValue) {
-          this.channel?.invokeMethod(PluginConstants.scanResultMethod, {
-            raw_value: rawValue,
-            display_value: rawValue,
-            format: Number(firstResult['scanType']) || 0,
-            value_type: 0,
-          });
-        } else {
-          Log.i(TAG, 'customScan.start first result has empty originalValue');
-        }
-      } else {
-        Log.i(TAG, 'customScan.start completed with empty results');
-      }
+  private async stopScanSafely(timeoutMs: number = this.stopTimeoutMs): Promise<void> {
+    try {
+      await Promise.race<void>([
+        customScan.stop(),
+        new Promise<void>((resolve) => {
+          setTimeout(() => resolve(), timeoutMs);
+        }),
+      ]);
+    } catch (error) {
+      Log.e(TAG, 'stopScanSafely error: ' + JSON.stringify(error));
+    }
+  }
 
-      if (!this.isScan) {
-        break;
+  private buildViewControl(): customScan.ViewControl {
+    return {
+      width: this.previewSize.width,
+      height: this.previewSize.height,
+      surfaceId: this.surfaceId,
+    };
+  }
+
+  private getErrorCode(error: Object): number {
+    if (!error || typeof error !== 'object') {
+      return -1;
+    }
+    const code = Number((error as Record<string, Object>)['code']);
+    return Number.isFinite(code) ? code : -1;
+  }
+
+  private startPreviewWarmupIfNeeded(): void {
+    if (!this.isCameraInitialized || !this.surfaceId || this.isScan || this.isScanLoopRunning) {
+      return;
+    }
+    if (this.isPreviewWarmupInFlight) {
+      return;
+    }
+
+    this.isPreviewWarmupInFlight = true;
+    const viewControl = this.buildViewControl();
+    customScan
+      .start(viewControl)
+      .then((data: scanBarcode.ScanResult[]) => {
+        Log.i(TAG, 'previewWarmup data: ' + JSON.stringify(data));
+        this.consecutiveBusyErrors = 0;
+      })
+      .catch((error: Object) => {
+        const errorCode = this.getErrorCode(error);
+        if (errorCode === 1000500001) {
+          this.consecutiveBusyErrors += 1;
+        } else {
+          this.consecutiveBusyErrors = 0;
+        }
+        Log.e(TAG, 'previewWarmup customScan.start error: ' + JSON.stringify(error));
+      })
+      .finally(() => {
+        this.isPreviewWarmupInFlight = false;
+        if (!this.isScan && this.isCameraInitialized && this.surfaceId) {
+          this.waitDelay(this.previewRetryMs).then(() => this.startPreviewWarmupIfNeeded());
+        }
+      });
+  }
+
+  private async runScanLoop(): Promise<void> {
+    if (this.isScanLoopRunning) {
+      return;
+    }
+    this.isScanLoopRunning = true;
+    try {
+      while (this.isPreviewRunning && this.isScan) {
+        if (!this.surfaceId) {
+          Log.e(TAG, 'runScanLoop aborted: surfaceId is empty');
+          this.isPreviewRunning = false;
+          this.isScan = false;
+          break;
+        }
+
+        let data: scanBarcode.ScanResult[] = [];
+        try {
+          if (this.consecutiveBusyErrors === 0) {
+            const viewControl = this.buildViewControl();
+            data = await customScan.start(viewControl);
+          } else {
+            customScan.rescan();
+            data = []; // rescan triggers callback via start's promise or async flow in typical implementations, but here we'll just wait for the next loop.
+          }
+          this.consecutiveBusyErrors = 0;
+        } catch (error) {
+          if (!this.isPreviewRunning || !this.isScan) {
+            break;
+          }
+          const errorCode = this.getErrorCode(error as Object);
+          Log.e(TAG, 'runScanLoop customScan.start error: ' + JSON.stringify(error));
+          if (errorCode === 1000500001) {
+            this.consecutiveBusyErrors += 1;
+            if (this.consecutiveBusyErrors >= 4) {
+              await this.stopScanSafely(600);
+              await this.waitDelay(Math.max(this.scanDelayMs, 600));
+              this.consecutiveBusyErrors = 0;
+            } else {
+              await this.waitDelay(Math.max(this.scanDelayMs, 220));
+            }
+            continue;
+          }
+          this.consecutiveBusyErrors = 0;
+          await this.stopScanSafely(500);
+          await this.waitDelay(Math.max(this.scanDelayMs, 180));
+          continue;
+        }
+
+        Log.i(TAG, 'customScan.start data: ' + JSON.stringify(data));
+        if (data && data.length > 0) {
+          const firstResult = data[0];
+          const rawValue = String(firstResult['originalValue'] ?? '');
+          if (rawValue) {
+            this.channel?.invokeMethod(PluginConstants.scanResultMethod, {
+              raw_value: rawValue,
+              display_value: rawValue,
+              format: Number(firstResult['scanType']) || 0,
+              value_type: 0,
+            });
+          } else {
+            Log.i(TAG, 'customScan.start first result has empty originalValue');
+          }
+        } else {
+          Log.i(TAG, 'customScan.start completed with empty results');
+        }
+
+        await this.stopScanSafely(500);
+        if (!this.isPreviewRunning || !this.isScan) {
+          break;
+        }
+        const nextDelay = data && data.length > 0
+          ? Math.max(this.scanDelayMs, 220)
+          : Math.max(this.scanDelayMs, 140);
+        await this.waitDelay(nextDelay);
       }
-      await this.waitDelay(this.scanDelayMs);
+    } finally {
+      this.isScanLoopRunning = false;
+      this.isPreviewRunning = false;
+      this.consecutiveBusyErrors = 0;
+      if (!this.isScan) {
+        this.startPreviewWarmupIfNeeded();
+      }
     }
   }
 
   async onMethodCall(call: MethodCall, result: MethodResult): Promise<void> {
     switch (call.method) {
-      case "initCameraPreview":
+      case 'initCameraPreview':
         this.initCameraPreview(call, result);
         break;
-      case "dispose":
+      case 'dispose':
         this.disposeHandle(result);
         break;
-      case "toggleFlash":
+      case 'toggleFlash':
         this.toggleFlash(result);
         break;
-      case "startScan":
+      case 'startScan':
         await this.startScan(call, result);
         break;
-      case "cancelScan":
+      case 'cancelScan':
         this.cancelScan(result);
         break;
-      case "setScanDelay":
+      case 'setScanDelay':
         this.setScanDelay(call, result);
         break;
-      case "updateConstraints":
+      case 'updateConstraints':
         this.updateConstraints(call, result);
         break;
-      case "pauseCameraMethod":
+      case 'pauseCameraMethod':
         this.pauseCamera(result);
         break;
-      case "resumeCameraMethod":
+      case 'resumeCameraMethod':
         this.resumeCamera(result);
         break;
-      case "setZoom":
+      case 'setZoom':
         this.setZoom(call, result);
         break;
-      case "setCropAreaMethod":
+      case 'setCropAreaMethod':
         this.setCropArea(call, result);
         break;
       default:
@@ -202,9 +334,14 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
     this.methodResult = result;
 
     const rawArgsMap: ESObject = call.args as ESObject;
-    const args = this.convertArgsToRecord(rawArgsMap);
+    const args = this.normalizeArgs(rawArgsMap);
     Log.i(TAG, 'initCameraPreview args ' + JSON.stringify(args));
     this.initialScannerParameters = (args && (args as OhosScannerParameters)) || null;
+
+    const comp = getCurrentCameraPreviewComponent();
+    if (comp) {
+      comp.onInitCameraPreviewRequested();
+    }
   }
 
   private recursivelyConvertMap(obj: ESObject): Object {
@@ -242,9 +379,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
 
   private disposeHandle(result: MethodResult): void {
     // 释放相机资源
-    Log.i(TAG, "dispose called");
+    Log.i(TAG, 'dispose called');
     this.isCameraInitialized = false;
+    this.isPreviewRunning = false;
+    this.isPreviewWarmupInFlight = false;
     this.isScan = false;
+    this.stopScanSafely();
     result.success(true);
   }
 
@@ -256,9 +396,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
 
   private toggleFlash(result: MethodResult): void {
     // 切换闪光灯
-    Log.i(TAG, "toggleFlash called");
+    Log.i(TAG, 'toggleFlash called');
     if (!this.isCameraInitialized) {
-      result.error(PluginError.CameraIsNotInitialized, "Camera is not initialized", null);
+      result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
       return;
     }
     result.success(true);
@@ -266,9 +406,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
 
   private async startScan(call: MethodCall, result: MethodResult): Promise<void> {
     // 开始扫描
-    const comp = getCurrentCameraPreview();
-    const actualSurfaceId = this.surfaceId || comp?.getSurfaceId() || '';
-    const args = this.convertArgsToRecord(call.args as ESObject);
+    Log.i(TAG, 'startScan args=');
+    const comp = getCurrentCameraPreviewComponent();
+    const args = this.normalizeArgs(call.args as ESObject);
     let options: MLKitScannerOptions;
     try {
       options = MLKitScannerOptions.fromMap(args);
@@ -280,49 +420,46 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
     }
 
     this.scanDelayMs = options.periodMs;
-    Log.i(TAG, "startScan called cached surfaceId: " + this.surfaceId + ', actual surfaceId: ' + actualSurfaceId);
-    Log.i(TAG, 'startScan state isCameraInitialized=' + this.isCameraInitialized + ', isScan=' + this.isScan +
-      ', scanDelayMs=' + this.scanDelayMs + ', recognizeType=' + options.recognizeType);
+
     if (!this.isCameraInitialized) {
       Log.e(TAG, 'startScan aborted: camera is not initialized');
-      result.error(PluginError.CameraIsNotInitialized, "Camera is not initialized", null);
+      result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
       return;
     }
     if (this.isScan) {
       Log.i(TAG, 'startScan skipped: scan already active');
       result.success(true);
-      return
+      return;
     }
-    if (!actualSurfaceId) {
+    if (!this.surfaceId) {
       Log.e(TAG, 'startScan aborted: surfaceId is empty');
       result.error(PluginError.CameraIsNotInitialized, 'Camera surface is not ready', null);
       return;
     }
 
     try {
-      Log.i(TAG,
-        'startScan preparing viewControl width=' + this.previewSize.width + ', height=' + this.previewSize.height);
-      const viewControl: customScan.ViewControl = {
-        width: this.previewSize.width,
-        height: this.previewSize.height,
-        surfaceId: actualSurfaceId
-      };
-      Log.i(TAG, 'startScan viewControl ready surfaceId=' + actualSurfaceId);
-
-      this.surfaceId = actualSurfaceId;
-      this.isScan = true
+      Log.i(
+        TAG,
+        'startScan preparing viewControl width=' +
+        this.previewSize.width +
+          ', height=' +
+        this.previewSize.height,
+      );
+      this.isScan = true;
+      this.isPreviewRunning = true;
       if (comp) {
         comp.setScanActive(true);
       }
 
-      Log.i(TAG, 'startScan invoking customScan.start');
-      await customScan.stop();
-      result.success(true);
-      this.runScanLoop(viewControl).catch((error: BusinessError) => {
+      Log.i(TAG, 'startScan enabling scan mode');
+      await this.stopScanSafely(500);
+      this.runScanLoop().catch((error: BusinessError) => {
+        this.isPreviewRunning = false;
         this.isScan = false;
         comp?.setScanActive(false);
         Log.e(TAG, 'Catch: startScan loop error = ' + JSON.stringify(error));
       });
+      result.success(true);
       return;
     } catch (error) {
       this.isScan = false;
@@ -333,15 +470,17 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
     }
   }
 
-  private cancelScan(result: MethodResult): void {
+  private async cancelScan(result: MethodResult): Promise<void> {
     // 取消扫描
-    Log.i(TAG, "cancelScan called");
+    Log.i(TAG, 'cancelScan called');
     this.isScan = false;
-    customScan.stop();
-    const comp = getCurrentCameraPreview();
+    this.isPreviewRunning = false;
+    await this.stopScanSafely(500);
+    const comp = getCurrentCameraPreviewComponent();
     if (comp) {
       comp.setScanActive(false);
     }
+    this.startPreviewWarmupIfNeeded();
     result.success(true);
   }
 
@@ -349,38 +488,79 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
     // 设置扫描延迟
     const delay: ESObject = call.args as ESObject;
     if (typeof delay !== 'number' || !Number.isFinite(delay)) {
-      result.error(PluginError.InvalidArguments, 'Invalid argument passed, Number type is expected', null);
+      result.error(
+        PluginError.InvalidArguments,
+        'Invalid argument passed, Number type is expected',
+        null,
+      );
       return;
     }
     if (delay < 0) {
-      result.error(PluginError.InvalidArguments, 'Invalid argument passed, value must be >= 0', null);
+      result.error(
+        PluginError.InvalidArguments,
+        'Invalid argument passed, value must be >= 0',
+        null,
+      );
       return;
     }
     // Android 端的分析器周期是通过设置扫描延迟来实现的，这个周期控制了连续扫描之间的时间间隔。
     // 通过 setScanDelay 方法，Flutter 端可以动态调整这个间隔，以适应不同的使用场景。
     // 例如，在需要快速连续扫描时，可以将延迟设置为较小的值；在需要减少设备负载或避免重复扫描时，可以将延迟设置为较大的值。
     this.scanDelayMs = Math.trunc(delay);
-    Log.i(TAG, "setScanDelay called, scanDelayMs=" + this.scanDelayMs);
+    Log.i(TAG, 'setScanDelay called, scanDelayMs=' + this.scanDelayMs);
     result.success(true);
   }
 
   private updateConstraints(call: MethodCall, result: MethodResult): void {
-    // 更新约束
-    Log.i(TAG, "updateConstraints called");
+    const args = this.normalizeArgs(call.args as ESObject);
+    const width = Number(args['width']);
+    const height = Number(args['height']);
+
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      result.error(
+        PluginError.InvalidArguments,
+        'Invalid constraints passed, positive width/height are expected',
+        null,
+      );
+      return;
+    }
+
+    const roundedWidth = Math.round(width);
+    const roundedHeight = Math.round(height);
+    if (this.previewSize.width === roundedWidth && this.previewSize.height === roundedHeight) {
+      result.success(true);
+      return;
+    }
+
+    this.previewSize = {
+      width: roundedWidth,
+      height: roundedHeight,
+    };
+
+    const comp = getCurrentCameraPreviewComponent();
+    if (comp) {
+      comp.applyPreviewConstraints(this.previewSize.width, this.previewSize.height);
+    }
+
+    if (this.initialScannerParameters?.initialCropRect && comp) {
+      comp.applyCropRect();
+    }
+
+    Log.i(TAG, 'updateConstraints called, previewSize=' + JSON.stringify(this.previewSize));
     result.success(true);
   }
 
   private pauseCamera(result: MethodResult): void {
     // 暂停相机
-    Log.i(TAG, "pauseCamera called");
+    Log.i(TAG, 'pauseCamera called');
     result.success(true);
   }
 
   public resumeCamera(result: MethodResult): void {
     // 恢复相机
-    Log.i(TAG, "resumeCamera called");
+    Log.i(TAG, 'resumeCamera called');
     if (!this.isCameraInitialized) {
-      result.error(PluginError.CameraIsNotInitialized, "Camera is not initialized", null);
+      result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
       return;
     }
     result.success(true);
@@ -388,9 +568,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
 
   private setZoom(call: MethodCall, result: MethodResult): void {
     // 设置缩放
-    Log.i(TAG, "setZoom called");
+    Log.i(TAG, 'setZoom called');
     if (!this.isCameraInitialized) {
-      result.error(PluginError.CameraIsNotInitialized, "Camera is not initialized", null);
+      result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
       return;
     }
     result.success(true);
@@ -398,9 +578,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
 
   private setCropArea(call: MethodCall, result: MethodResult): void {
     // 设置扫描区域
-    Log.i(TAG, "setCropArea called");
+    Log.i(TAG, 'setCropArea called');
     const rawArgsMap: ESObject = call.args as ESObject;
-    const args = this.convertArgsToRecord(rawArgsMap);
+    const args = this.normalizeArgs(rawArgsMap);
     const rect: CropRect = {
       scaleWidth: Number(args['scaleWidth']) || 1,
       scaleHeight: Number(args['scaleHeight']) || 1,
@@ -409,9 +589,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
     };
     this.initialScannerParameters = this.initialScannerParameters || {};
     this.initialScannerParameters.initialCropRect = rect;
-    const comp = getCurrentCameraPreview();
+    const comp = getCurrentCameraPreviewComponent();
     if (comp) {
-      comp.applyCropRect(rect);
+      comp.applyCropRect();
     }
 
     result.success(true);
@@ -419,13 +599,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler,
 
   private getAvailableCameras(result: MethodResult): void {
     // 获取可用相机
-    Log.i(TAG, "getAvailableCameras called");
+    Log.i(TAG, 'getAvailableCameras called');
     result.success([]);
   }
 
   private setCamera(call: MethodCall, result: MethodResult): void {
     // 设置相机
-    Log.i(TAG, "setCamera called");
+    Log.i(TAG, 'setCamera called');
     result.success(true);
   }
 }
