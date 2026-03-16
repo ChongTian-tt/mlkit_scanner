@@ -72,6 +72,14 @@ export struct CameraPreviewComponent {
             cropRect: this.cropRectState,
             isActive: this.isActive,
           })
+            .key(
+              'scanner-overlay-' +
+                this.cropRectState.scaleWidth + '-' +
+                this.cropRectState.scaleHeight + '-' +
+                this.cropRectState.offsetX + '-' +
+                this.cropRectState.offsetY + '-' +
+                this.isActive,
+            )
         }
       }
     }
@@ -255,7 +263,12 @@ export struct CameraPreviewComponent {
       }
       this.offsetX = (this.cameraWidth / 2) * (1 + initialCropRect.offsetX) - this.cameraWidth / 2;
       this.offsetY = (this.cameraHeight / 2) * (1 + initialCropRect.offsetY) - this.cameraHeight / 2;
-      this.cropRectState = initialCropRect;
+      this.cropRectState = {
+        scaleWidth: initialCropRect.scaleWidth,
+        scaleHeight: initialCropRect.scaleHeight,
+        offsetX: initialCropRect.offsetX,
+        offsetY: initialCropRect.offsetY,
+      };
     } catch (error) {
       Log.e(TAG, "applyCropRect error: " + error);
     }

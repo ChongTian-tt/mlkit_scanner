@@ -18,6 +18,7 @@ export struct ScannerOverlay {
   onPropChange() {
     if (this.isCanvasReady) {
       this.context.invalidate();
+      this.onDraw();
     }
   }
 
@@ -104,6 +105,8 @@ export struct ScannerOverlay {
     const w = canvas.getWidth();
     const h = canvas.getHeight();
 
+    canvas.clear({ alpha: 0, red: 0, green: 0, blue: 0 });
+
     // 1. Draw semi-transparent background mask
     const bgBrush = new drawing.Brush();
     const blackColor: common2D.Color = { alpha: 120, red: 0, green: 0, blue: 0 };
@@ -137,6 +140,11 @@ export struct ScannerOverlay {
       .onReady(() => {
         this.isCanvasReady = true;
         this.onDraw();
+      })
+      .onAreaChange(() => {
+        if (this.isCanvasReady) {
+          this.onDraw();
+        }
       })
   }
 }
