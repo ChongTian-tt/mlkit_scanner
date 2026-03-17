@@ -41,8 +41,9 @@ interface CropPosition {
 interface PreviewState {
   isRunning: boolean;
   isWarmupInFlight: boolean;
-  busyErrorCount: number;
+  isStopInFlight: boolean;
   shouldKeep: boolean;
+  isPausedByUser: boolean;
   isAwaitingRescan: boolean;
   rescanTimerId: number;
 }
@@ -67,6 +68,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   public initialScannerParameters: OhosScannerParameters | null = null;
   public isCameraInitialized: boolean = false;
   public userGrant: boolean = false;
+  public flashLightStatus: boolean = false;
+  private flashLightStatusBeforePause: boolean = false;
   // isScan 表示当前是否处于扫描状态
   public isScan: boolean = false;
   // previewSize 是预览的分辨率，扫描器会基于这个分辨率来配置相机和处理图像数据
@@ -78,8 +81,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private previewState: PreviewState = {
     isRunning: false,
     isWarmupInFlight: false,
-    busyErrorCount: 0,
+    // 阻止 stop 未完成时的重复 start
+    isStopInFlight: false,
+    // 区分“预览应该继续存在”还是“当前应该彻底停掉”
     shouldKeep: false,
+    // 把用户主动 pause 和宿主切后台区分开
+    isPausedByUser: false,
+    // 控制 customScan.rescan 的触发窗口
     isAwaitingRescan: false,
     rescanTimerId: -1,
   };
@@ -93,12 +101,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   };
   private readonly frameDecodeThrottleMs: number = 33;
   private readonly cropBufferRatio: number = 0.1;
-  private readonly maxPlatformZoom: number = 6;
   private desiredZoom: number | null = null;
-  private diagFrameCount: number = 0;
-  private diagDecodeAttempts: number = 0;
-  private diagDecodeHits: number = 0;
-  private diagLastStatsMs: number = 0;
+  private focusTimerId: number = -1;
+  private resetFocusTimerId: number = -1;
 
   constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: ESObject) {
     super();
@@ -115,7 +120,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       "CameraPreviewView constructor created with viewId: " +
         viewId +
         ", previewSize=" +
-        JSON.stringify(this.previewSize),
+      JSON.stringify(this.previewSize),
     );
   }
 
@@ -154,8 +159,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private resetPreviewState(): void {
     this.previewState.isRunning = false;
     this.previewState.isWarmupInFlight = false;
-    this.previewState.busyErrorCount = 0;
+    this.previewState.isStopInFlight = false;
     this.previewState.shouldKeep = false;
+    this.previewState.isPausedByUser = false;
     this.previewState.isAwaitingRescan = false;
     this.clearPendingRescan();
     this.clearFocusTimers();
@@ -168,7 +174,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private markPreviewStarted(): void {
     this.previewState.isRunning = true;
     this.previewState.isWarmupInFlight = false;
-    this.previewState.busyErrorCount = 0;
     this.previewState.isAwaitingRescan = false;
   }
 
@@ -176,7 +181,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.previewState.isRunning = false;
     this.previewState.isWarmupInFlight = false;
     this.previewState.isAwaitingRescan = false;
-    this.previewState.busyErrorCount = 0;
   }
 
   private beginScanSession(): void {
@@ -185,22 +189,59 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.previewState.isAwaitingRescan = true;
     this.decodeState.scanSessionStartedAtMs = Date.now();
     this.resetDecodeTiming();
-    this.diagFrameCount = 0;
-    this.diagDecodeAttempts = 0;
-    this.diagDecodeHits = 0;
-    this.diagLastStatsMs = 0;
     getCurrentCameraPreviewComponent()?.setScanActive(true);
   }
 
   private endScanSession(keepPreview: boolean): void {
     this.isScan = false;
-    this.previewState.busyErrorCount = 0;
     this.previewState.shouldKeep = keepPreview;
     this.previewState.isAwaitingRescan = false;
     this.decodeState.scanSessionStartedAtMs = 0;
     this.resetDecodeTiming();
     this.clearPendingRescan();
     getCurrentCameraPreviewComponent()?.setScanActive(false);
+  }
+
+
+  async onMethodCall(call: MethodCall, result: MethodResult): Promise<void> {
+    switch (call.method) {
+      case "initCameraPreview":
+        this.initCameraPreview(call, result);
+        break;
+      case "dispose":
+        this.disposeHandle(result);
+        break;
+      case "toggleFlash":
+        this.toggleFlash(result);
+        break;
+      case "startScan":
+        await this.startScan(call, result);
+        break;
+      case "cancelScan":
+        this.cancelScan(result);
+        break;
+      case "setScanDelay":
+        this.setScanDelay(call, result);
+        break;
+      case "updateConstraints":
+        this.updateConstraints(call, result);
+        break;
+      case "pauseCameraMethod":
+        this.pauseCamera(result);
+        break;
+      case "resumeCameraMethod":
+        this.resumeCamera(result);
+        break;
+      case "setZoom":
+        this.setZoom(call, result);
+        break;
+      case "setCropAreaMethod":
+        this.setCropArea(call, result);
+        break;
+      default:
+        result.notImplemented();
+        break;
+    }
   }
 
   private normalizeArgs(rawArgs: ESObject): Record<string, Object> {
@@ -219,6 +260,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     return this.recursivelyConvertMap(rawArgs) as Record<string, Object>;
   }
+
   // 解析正数尺寸
   private parsePositiveSize(args: Record<string, Object>): Size | null {
     const width = Number(args["width"]);
@@ -243,17 +285,24 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   // 安全停止扫描
-  private async stopScanSafely(timeoutMs: number = this.stopTimeoutMs): Promise<void> {
+  private async stopScanSafely(timeoutMs: number = this.stopTimeoutMs): Promise<boolean> {
     let retriesLeft = 2;
     while (retriesLeft >= 0) {
+      let stopCompleted = false;
       try {
         await Promise.race<void>([
-          customScan.stop(),
+          customScan.stop().then(() => {
+            stopCompleted = true;
+          }),
           new Promise<void>((resolve) => {
             setTimeout(() => resolve(), timeoutMs);
           }),
         ]);
-        return;
+        if (stopCompleted) {
+          return true;
+        }
+        Log.i(TAG, "stopScanSafely timed out before stop completed");
+        return false;
       } catch (error) {
         const errorCode = this.getErrorCode(error as Object);
         if (errorCode === 1000500001 && retriesLeft > 0) {
@@ -262,54 +311,63 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
           continue;
         }
         Log.e(TAG, "stopScanSafely error: " + JSON.stringify(error));
-        return;
+        return false;
       }
     }
+    return false;
   }
 
-  private getFocusPointForCropCenter(): scanBarcode.Point {
-    const crop = this.getPreviewCropRect();
-    const centerX = crop.left + crop.width / 2;
-    const centerY = crop.top + crop.height / 2;
-    const focusX = this.clamp(centerY / this.previewSize.height, 0, 1);
-    const focusY = this.clamp(1 - centerX / this.previewSize.width, 0, 1);
-    return { x: focusX, y: focusY };
-  }
+  // private getFocusPointForCropCenter(): scanBarcode.Point {
+  //   const crop = this.getPreviewCropRect();
+  //   const centerX = crop.left + crop.width / 2;
+  //   const centerY = crop.top + crop.height / 2;
+  //   const focusX = this.clamp(centerY / this.previewSize.height, 0, 1);
+  //   const focusY = this.clamp(1 - centerX / this.previewSize.width, 0, 1);
+  //   return { x: focusX, y: focusY };
+  // }
 
-  private focusTimerId: number = -1;
-  private resetFocusTimerId: number = -1;
+  // private getFocusPointForZoom(): scanBarcode.Point {
+  //   const crop = this.getPreviewCropRect();
+  //   const focusTargetX = crop.left + crop.width / 2;
+  //   const focusTargetY = crop.top + crop.height * 0.42;
+  //   const focusX = this.clamp(focusTargetY / this.previewSize.height, 0, 1);
+  //   const focusY = this.clamp(1 - focusTargetX / this.previewSize.width, 0, 1);
+  //   return { x: focusX, y: focusY };
+  // }
 
-  private applyInitialFocus(): void {
-    this.clearFocusTimers();
-    this.focusTimerId = setTimeout(() => {
-      this.focusTimerId = -1;
-      if (!this.previewState.isRunning) {
-        return;
-      }
-      try {
-        const point = this.getFocusPointForCropCenter();
-        customScan.setFocusPoint(point);
-        Log.i(
-          TAG,
-          "setFocusPoint to crop center: x=" + point.x.toFixed(3) + ", y=" + point.y.toFixed(3),
-        );
-      } catch (error) {
-        Log.e(TAG, "setFocusPoint error: " + JSON.stringify(error));
-      }
-      this.resetFocusTimerId = setTimeout(() => {
-        this.resetFocusTimerId = -1;
-        if (!this.previewState.isRunning) {
-          return;
-        }
-        try {
-          customScan.resetFocus();
-          Log.i(TAG, "resetFocus to continuous AF");
-        } catch (error) {
-          Log.e(TAG, "resetFocus error: " + JSON.stringify(error));
-        }
-      }, 1500) as number;
-    }, 500) as number;
-  }
+
+  // private applyInitialFocus(): void {
+  // 默认使用系统相机焦点配置，不主动设置焦点。
+  // this.clearFocusTimers();
+  // this.focusTimerId = setTimeout(() => {
+  //   this.focusTimerId = -1;
+  //   if (!this.previewState.isRunning) {
+  //     return;
+  //   }
+  //   try {
+  //     const point = this.getFocusPointForCropCenter();
+  //     customScan.setFocusPoint(point);
+  //     Log.i(
+  //       TAG,
+  //       "setFocusPoint to crop center: x=" + point.x.toFixed(3) + ", y=" + point.y.toFixed(3),
+  //     );
+  //   } catch (error) {
+  //     Log.e(TAG, "setFocusPoint error: " + JSON.stringify(error));
+  //   }
+  //   this.resetFocusTimerId = setTimeout(() => {
+  //     this.resetFocusTimerId = -1;
+  //     if (!this.previewState.isRunning) {
+  //       return;
+  //     }
+  //     try {
+  //       customScan.resetFocus();
+  //       Log.i(TAG, "resetFocus to continuous AF");
+  //     } catch (error) {
+  //       Log.e(TAG, "resetFocus error: " + JSON.stringify(error));
+  //     }
+  //   }, 1500) as number;
+  // }, 500) as number;
+  // }
 
   private clearFocusTimers(): void {
     if (this.focusTimerId >= 0) {
@@ -320,6 +378,84 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       clearTimeout(this.resetFocusTimerId);
       this.resetFocusTimerId = -1;
     }
+  }
+
+  private reapplyFocusAfterZoom(): void {
+    // 默认使用系统相机焦点配置，不在 zoom 后主动干预焦点。
+    // this.clearFocusTimers();
+    // this.focusTimerId = setTimeout(() => {
+    //   this.focusTimerId = -1;
+    //   if (!this.previewState.isRunning) {
+    //     return;
+    //   }
+    //   try {
+    //     const point = this.getFocusPointForZoom();
+    //     customScan.setFocusPoint(point);
+    //     Log.i(
+    //       TAG,
+    //       "setFocusPoint after zoom: x=" + point.x.toFixed(3) + ", y=" + point.y.toFixed(3),
+    //     );
+    //   } catch (error) {
+    //     Log.e(TAG, "setFocusPoint after zoom error: " + JSON.stringify(error));
+    //   }
+    // }, 40) as number;
+    // this.resetFocusTimerId = setTimeout(() => {
+    //   this.resetFocusTimerId = -1;
+    //   if (!this.previewState.isRunning) {
+    //     return;
+    //   }
+    //   try {
+    //     customScan.resetFocus();
+    //     Log.i(TAG, "resetFocus after zoom");
+    //   } catch (error) {
+    //     Log.e(TAG, "resetFocus after zoom error: " + JSON.stringify(error));
+    //   }
+    // }, 80) as number;
+  }
+
+  private pausePreviewFlow(): void {
+    this.clearPendingRescan();
+    this.clearFocusTimers();
+    if (!this.previewState.isRunning && !this.previewState.isWarmupInFlight) {
+      return;
+    }
+    this.previewState.isRunning = false;
+    this.previewState.isWarmupInFlight = false;
+    this.previewState.isAwaitingRescan = false;
+    if (this.previewState.isStopInFlight) {
+      return;
+    }
+    this.previewState.isStopInFlight = true;
+    this.stopScanSafely().then(async (stopped) => {
+      if (!stopped) {
+        await this.waitDelay(180);
+      }
+      this.previewState.isStopInFlight = false;
+      if (
+        this.previewState.shouldKeep &&
+        !this.previewState.isPausedByUser &&
+        !this.previewState.isRunning &&
+        !this.previewState.isWarmupInFlight &&
+        this.isCameraInitialized &&
+        !!this.surfaceId
+      ) {
+        this.startPreviewIfNeeded();
+      }
+    });
+  }
+
+  private resumePreviewFlow(): void {
+    if (
+      this.previewState.isRunning ||
+      this.previewState.isWarmupInFlight ||
+      this.previewState.isStopInFlight
+    ) {
+      return;
+    }
+    this.previewState.shouldKeep = true;
+    this.previewState.isRunning = false;
+    this.previewState.isWarmupInFlight = false;
+    this.startPreviewIfNeeded();
   }
 
   private parseZoomValue(rawArgs: ESObject): number | null {
@@ -342,21 +478,15 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
 
     try {
-      const platformZoom = this.toPlatformZoom(this.desiredZoom);
-      customScan.setZoom(platformZoom);
-      Log.i(
-        TAG,
-        "setZoom success, normalizedZoom=" + this.desiredZoom + ", platformZoom=" + platformZoom,
-      );
+      // 默认使用系统相机焦距配置，不主动设置 zoom。
+      // customScan.setZoom(this.desiredZoom);
+      // Log.i(TAG, "setZoom success, normalizedZoom=" + this.desiredZoom);
+      // this.reapplyFocusAfterZoom();
       return true;
     } catch (error) {
       Log.e(TAG, "setZoom error: " + JSON.stringify(error));
       return false;
     }
-  }
-
-  private toPlatformZoom(normalizedZoom: number): number {
-    return 1 + normalizedZoom * (this.maxPlatformZoom - 1);
   }
 
   private buildViewControl(): customScan.ViewControl {
@@ -399,8 +529,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private triggerRescan(): void {
     if (
       !this.previewState.shouldKeep ||
-      !this.previewState.isRunning ||
-      !this.previewState.isAwaitingRescan
+        !this.previewState.isRunning ||
+        !this.previewState.isAwaitingRescan
     ) {
       return;
     }
@@ -428,7 +558,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   private handleScanCallback(data: scanBarcode.ScanResult[]): void {
     void data;
-    this.previewState.busyErrorCount = 0;
+    if (
+      this.previewState.isPausedByUser ||
+      this.previewState.isStopInFlight ||
+      !this.previewState.shouldKeep
+    ) {
+      return;
+    }
     this.previewState.isRunning = true;
     this.previewState.isAwaitingRescan = true;
     if (!this.isScan) {
@@ -441,7 +577,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     const errorCode = this.getErrorCode(error);
     Log.e(TAG, "startPreview error: " + JSON.stringify(error));
     if (errorCode === 1000500001 && retriesLeft > 0) {
-      this.previewState.busyErrorCount += 1;
       this.waitDelay(180).then(() => this.tryStartPreview(retriesLeft - 1));
       return;
     }
@@ -532,7 +667,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (width < 2 || height < 2) {
       return null;
     }
-    return { left: alignedLeft, top: alignedTop, width, height };
+    return {
+      left: alignedLeft,
+      top: alignedTop,
+      width,
+      height
+    };
   }
 
   private getFrameCropRect(frame: customScan.ScanFrame): CropPosition | null {
@@ -540,9 +680,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     const frameHeight = Number(frame["height"]);
     if (
       !Number.isFinite(frameWidth) ||
-      !Number.isFinite(frameHeight) ||
-      frameWidth < 2 ||
-      frameHeight < 2
+        !Number.isFinite(frameHeight) ||
+        frameWidth < 2 ||
+        frameHeight < 2
     ) {
       return null;
     }
@@ -620,8 +760,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private shouldDecodeFrame(nowMs: number): boolean {
     if (
       !this.isScan ||
-      !this.previewState.shouldKeep ||
-      !this.previewState.isRunning ||
+        !this.previewState.shouldKeep ||
+        !this.previewState.isRunning ||
       this.decodeState.inFlight
     ) {
       return false;
@@ -640,7 +780,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       if (!results.length) {
         return;
       }
-      this.diagDecodeHits++;
       const rawValue = String(results[0]["originalValue"] ?? "");
       const prevDecoded = this.decodeState.lastDecodedRawValue;
       this.decodeState.lastDecodedRawValue = rawValue;
@@ -659,21 +798,15 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private handlePreviewFrame(frame: customScan.ScanFrame): void {
-    this.previewState.isRunning = true;
-    this.diagFrameCount++;
-    const nowMs = Date.now();
-    if (this.isScan && nowMs - this.diagLastStatsMs >= 3000) {
-      this.diagLastStatsMs = nowMs;
-      Log.i(
-        TAG,
-        "[diag] frames=" +
-          this.diagFrameCount +
-          " attempts=" +
-          this.diagDecodeAttempts +
-          " hits=" +
-          this.diagDecodeHits,
-      );
+    if (
+      this.previewState.isPausedByUser ||
+      this.previewState.isStopInFlight ||
+      !this.previewState.shouldKeep
+    ) {
+      return;
     }
+    this.previewState.isRunning = true;
+    const nowMs = Date.now();
     if (!this.shouldDecodeFrame(nowMs)) {
       return;
     }
@@ -682,13 +815,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!image) {
       return;
     }
-    if (this.diagDecodeAttempts === 0) {
-      const fw = Number(frame["width"]);
-      const fh = Number(frame["height"]);
-      Log.i(TAG, "[diag] frame=" + fw + "x" + fh + " crop=" + image.width + "x" + image.height);
-    }
-    this.diagDecodeAttempts++;
-    this.decodeState.lastAttemptAtMs = nowMs;
+    
     this.decodeState.inFlight = true;
     void this.decodeCroppedFrame(image);
   }
@@ -698,8 +825,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private startPreviewIfNeeded(): void {
     if (
       !this.isCameraInitialized ||
-      !this.surfaceId ||
-      !this.previewState.shouldKeep ||
+        !this.surfaceId ||
+        !this.previewState.shouldKeep ||
+        this.previewState.isPausedByUser ||
+        this.previewState.isStopInFlight ||
       this.previewState.isRunning
     ) {
       return;
@@ -712,7 +841,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private tryStartPreview(retriesLeft: number): void {
-    if (!this.previewState.shouldKeep || !this.isCameraInitialized || !this.surfaceId) {
+    if (
+      !this.previewState.shouldKeep ||
+      !this.isCameraInitialized ||
+      !this.surfaceId ||
+      this.previewState.isPausedByUser ||
+      this.previewState.isStopInFlight
+    ) {
       this.previewState.isWarmupInFlight = false;
       return;
     }
@@ -736,51 +871,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       );
       this.markPreviewStarted();
       this.applyDesiredZoomIfPossible();
-      this.applyInitialFocus();
+      // this.applyInitialFocus();
       Log.i(TAG, "startPreview success");
     } catch (error) {
       this.handleStartPreviewError(error as Object, retriesLeft);
-    }
-  }
-
-  async onMethodCall(call: MethodCall, result: MethodResult): Promise<void> {
-    switch (call.method) {
-      case "initCameraPreview":
-        this.initCameraPreview(call, result);
-        break;
-      case "dispose":
-        this.disposeHandle(result);
-        break;
-      case "toggleFlash":
-        this.toggleFlash(result);
-        break;
-      case "startScan":
-        await this.startScan(call, result);
-        break;
-      case "cancelScan":
-        this.cancelScan(result);
-        break;
-      case "setScanDelay":
-        this.setScanDelay(call, result);
-        break;
-      case "updateConstraints":
-        this.updateConstraints(call, result);
-        break;
-      case "pauseCameraMethod":
-        this.pauseCamera(result);
-        break;
-      case "resumeCameraMethod":
-        this.resumeCamera(result);
-        break;
-      case "setZoom":
-        this.setZoom(call, result);
-        break;
-      case "setCropAreaMethod":
-        this.setCropArea(call, result);
-        break;
-      default:
-        result.notImplemented();
-        break;
     }
   }
 
@@ -801,10 +895,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     const args = this.normalizeArgs(rawArgsMap);
     Log.i(TAG, "initCameraPreview args " + JSON.stringify(args));
     this.initialScannerParameters = (args && (args as OhosScannerParameters)) || null;
-    const initialZoom = Number(this.initialScannerParameters?.initialZoom);
-    if (Number.isFinite(initialZoom) && initialZoom >= 0 && initialZoom <= 1) {
-      this.desiredZoom = initialZoom;
-    }
+    // const initialZoom = Number(this.initialScannerParameters?.initialZoom);
+    // if (Number.isFinite(initialZoom) && initialZoom >= 0 && initialZoom <= 1) {
+    //   this.desiredZoom = initialZoom;
+    // }
 
     const comp = getCurrentCameraPreviewComponent();
     if (comp) {
@@ -853,6 +947,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.resetPreviewState();
     this.resetDecodeState();
     this.desiredZoom = null;
+    this.flashLightStatusBeforePause = false;
     this.stopScanSafely();
     result.success(true);
   }
@@ -870,7 +965,19 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       result.error(PluginError.CameraIsNotInitialized, "Camera is not initialized", null);
       return;
     }
-    result.success(true);
+    try {
+      this.flashLightStatus = this.getFlashLightStatusSafely();
+      // 根据当前闪光灯状态，选择开启或关闭闪光灯
+      if (this.flashLightStatus) {
+        this.closeFlashLightSafely();
+        result.success(true);
+      } else {
+        this.openFlashLightSafely();
+        result.success(true);
+      }
+    } catch (error) {
+      Log.e(TAG, `Failed to getFlashLightStatus. Code: ${error.code}, message: ${error.message}`);
+    }
   }
 
   private async startScan(call: MethodCall, result: MethodResult): Promise<void> {
@@ -902,15 +1009,21 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
 
     this.beginScanSession();
-    this.startPreviewIfNeeded();
-    this.triggerRescan();
+    if (!this.previewState.isPausedByUser) {
+      this.startPreviewIfNeeded();
+    }
+    if (this.previewState.isRunning && !this.previewState.isPausedByUser) {
+      this.triggerRescan();
+    }
     result.success(true);
   }
 
   private async cancelScan(result: MethodResult): Promise<void> {
     Log.i(TAG, "cancelScan called");
     this.endScanSession(true);
-    this.startPreviewIfNeeded();
+    if (!this.previewState.isPausedByUser) {
+      this.startPreviewIfNeeded();
+    }
     result.success(true);
   }
 
@@ -959,11 +1072,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.previewSize = newSize;
     this.resetDecodeTiming();
     const comp = getCurrentCameraPreviewComponent();
-    if (comp) {
-      comp.applyPreviewConstraints(newSize.width, newSize.height);
-      if (this.initialScannerParameters?.initialCropRect) {
-        comp.applyCropRect();
-      }
+    if (comp && this.initialScannerParameters?.initialCropRect) {
+      comp.applyCropRect();
     }
     Log.i(TAG, "updateConstraints called, previewSize=" + JSON.stringify(this.previewSize));
     result.success(true);
@@ -972,6 +1082,16 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private pauseCamera(result: MethodResult): void {
     // 暂停相机
     Log.i(TAG, "pauseCamera called");
+    if (this.previewState.isPausedByUser) {
+      result.success(true);
+      return;
+    }
+    this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
+    if (this.flashLightStatusBeforePause) {
+      this.closeFlashLightSafely();
+    }
+    this.previewState.isPausedByUser = true;
+    this.pausePreviewFlow();
     result.success(true);
   }
 
@@ -982,7 +1102,64 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       result.error(PluginError.CameraIsNotInitialized, "Camera is not initialized", null);
       return;
     }
+    if (!this.previewState.isPausedByUser) {
+      result.success(true);
+      return;
+    }
+    this.previewState.isPausedByUser = false;
+    this.resumePreviewFlow();
+    if (this.flashLightStatusBeforePause) {
+      this.openFlashLightSafely();
+    }
+    this.flashLightStatusBeforePause = false;
     result.success(true);
+  }
+
+  private getFlashLightStatusSafely(): boolean {
+    try {
+      this.flashLightStatus = customScan.getFlashLightStatus();
+    } catch (error) {
+      Log.e(TAG, `Failed to getFlashLightStatus. Code: ${error.code}, message: ${error.message}`);
+    }
+    return this.flashLightStatus;
+  }
+
+  private closeFlashLightSafely(): void {
+    try {
+      customScan.closeFlashLight();
+      this.flashLightStatus = false;
+      Log.i(TAG, "closeFlashLight success");
+    } catch (error) {
+      Log.e(TAG, `Failed to closeFlashLight. Code: ${error.code}, message: ${error.message}`);
+    }
+  }
+
+  private openFlashLightSafely(): void {
+    try {
+      customScan.openFlashLight();
+      this.flashLightStatus = true;
+      Log.i(TAG, "openFlashLight success");
+    } catch (error) {
+      Log.e(TAG, `Failed to openFlashLight. Code: ${error.code}, message: ${error.message}`);
+    }
+  }
+
+  public onHostBackground(): void {
+    if (!this.isCameraInitialized) {
+      return;
+    }
+    Log.i(TAG, "onHostBackground called");
+    this.pausePreviewFlow();
+  }
+
+  public onHostForeground(): void {
+    if (!this.isCameraInitialized || !this.surfaceId) {
+      return;
+    }
+    Log.i(TAG, "onHostForeground called");
+    if (!this.previewState.isPausedByUser) {
+      this.resumePreviewFlow();
+    }
   }
 
   private setZoom(call: MethodCall, result: MethodResult): void {
@@ -1008,6 +1185,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
 
     this.desiredZoom = zoom;
+    Log.i(TAG, "setZoom ignored, use default camera zoom configuration");
     if (!this.previewState.isRunning) {
       Log.i(TAG, "setZoom deferred until preview starts, zoom=" + zoom);
       result.success(true);

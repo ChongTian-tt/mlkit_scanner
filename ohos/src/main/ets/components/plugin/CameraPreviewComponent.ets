@@ -18,7 +18,7 @@ import { getCurrentMLKitScannerView, MLKitScannerView } from "./MLKitScannerView
 import { PermissionsUtil } from "./PermissionsUtil";
 import { CropRect, PluginConstants, PluginError } from "./PluginConstants";
 import { ScannerOverlay } from "./ScannerOverlay";
-import { common } from "@kit.AbilityKit";
+import { common, AbilityLifecycleCallback } from "@kit.AbilityKit";
 import { customScan, scanBarcode, scanCore } from "@kit.ScanKit";
 import { display } from "@kit.ArkUI";
 import { window } from '@kit.ArkUI';
@@ -45,6 +45,7 @@ export struct CameraPreviewComponent {
   @State isActive: boolean = false;
   private isWindowRegistered: boolean = false;
   private isScanKitInitialized: boolean = false;
+  private lifecycleId: number = -1;
   private window = this.context.windowStage.getMainWindowSync();
 
   build() {
@@ -102,12 +103,9 @@ export struct CameraPreviewComponent {
     currentCameraPreview = this;
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
-    Log.i(TAG, "aboutToAppear, cached userGrant=" + this.flutterMLKitScannerView?.userGrant);
-    Log.i(TAG, "aboutToAppear, cached methodResult=" + this.flutterMLKitScannerView?.methodResult);
     this.registerWindow();
-    if (this.flutterMLKitScannerView && this.flutterMLKitScannerView.methodResult) {
-      await this.onInitCameraPreviewRequested();
-    }
+    this.registerLifecycle();
+    await this.onInitCameraPreviewRequested();
   }
 
   async onInitCameraPreviewRequested(): Promise<void> {
@@ -145,15 +143,39 @@ export struct CameraPreviewComponent {
             this.isActive = false;
             return;
           }
-          if (scannerView.isScan && scannerView.methodResult) {
-            scannerView.resumeCamera(scannerView.methodResult)
-          }
+          scannerView.onHostForeground();
         }
       }
       this.window.on('windowEvent', callback);
       this.isWindowRegistered = true;
     } catch (error) {
       Log.e(TAG, `Failed to unregister window focus listener: ${error}`);
+    }
+  }
+
+  registerLifecycle() {
+    if (this.lifecycleId >= 0) {
+      return;
+    }
+    try {
+      const callbacks: AbilityLifecycleCallback = {
+        onAbilityCreate: () => {},
+        onWindowStageCreate: () => {},
+        onWindowStageActive: () => {},
+        onWindowStageInactive: () => {},
+        onWindowStageDestroy: () => {},
+        onAbilityDestroy: () => {},
+        onAbilityContinue: () => {},
+        onAbilityForeground: () => {
+          getCurrentMLKitScannerView()?.onHostForeground();
+        },
+        onAbilityBackground: () => {
+          getCurrentMLKitScannerView()?.onHostBackground();
+        },
+      };
+      this.lifecycleId = this.context.getApplicationContext().on('abilityLifecycle', callbacks as ESObject);
+    } catch (error) {
+      Log.e(TAG, `Failed to register lifecycle listener: ${error}`);
     }
   }
 
@@ -169,13 +191,8 @@ export struct CameraPreviewComponent {
 
   private async tryInitScanKit(scene: string): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
-    if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult) {
-      return;
-    }
-    if (!this.hasPermission) {
-      return;
-    }
-    if (!this.surfaceId) {
+    if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult ||
+    !this.surfaceId || !this.hasPermission) {
       return;
     }
 
@@ -215,11 +232,24 @@ export struct CameraPreviewComponent {
     this.isWindowRegistered = false;
   }
 
+  unRegisterLifecycle() {
+    if (this.lifecycleId < 0) {
+      return;
+    }
+    try {
+      this.context.getApplicationContext().off('abilityLifecycle', this.lifecycleId);
+    } catch (error) {
+      Log.e(TAG, `Failed to unregister lifecycle listener: ${error}`);
+    }
+    this.lifecycleId = -1;
+  }
+
   aboutToDisappear() {
     Log.i(TAG, "aboutToDisappear");
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.unRegisterWindow();
+    this.unRegisterLifecycle();
   }
 
   getSurfaceId(): string {
@@ -228,24 +258,6 @@ export struct CameraPreviewComponent {
 
   setScanActive(active: boolean): void {
     this.isActive = active;
-  }
-
-  applyPreviewConstraints(width: number, height: number): void {
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-      Log.e(TAG, 'applyPreviewConstraints ignored invalid size width=' + width + ', height=' + height);
-      return;
-    }
-
-    this.cameraWidth = width;
-    this.cameraHeight = height;
-    this.cameraWidth = width;
-    this.cameraHeight = height;
-    this.offsetX = 0;
-    this.offsetY = 0;
-
-    if (this.cropRectState) {
-      this.applyCropRect();
-    }
   }
 
   // helper for external calls (e.g. setCropArea)
