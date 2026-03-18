@@ -58,7 +58,6 @@ export struct CameraPreviewComponent {
           controller: this.mXComponentController,
         })
           .onLoad(() => {
-            Log.i(TAG, "XComponent onLoad");
             this.onLoadHandle();
           })
           .width(this.cameraWidth)
@@ -167,9 +166,11 @@ export struct CameraPreviewComponent {
         onAbilityDestroy: () => {},
         onAbilityContinue: () => {},
         onAbilityForeground: () => {
+          // 解锁或回到前台时，恢复扫描
           getCurrentMLKitScannerView()?.onHostForeground();
         },
         onAbilityBackground: () => {
+          // 锁屏或退到后台时，暂停扫描
           getCurrentMLKitScannerView()?.onHostBackground();
         },
       };
@@ -213,7 +214,6 @@ export struct CameraPreviewComponent {
       this.isScanKitInitialized = true;
       this.flutterMLKitScannerView.setCameraInitialized(true);
       this.flutterMLKitScannerView.methodResult.success(true);
-      this.flutterMLKitScannerView.methodResult = null;
       Log.i(TAG, `${scene} customScan.init success`);
     } catch (error) {
       Log.e(TAG, `${scene} customScan init error: ` + error);
@@ -222,7 +222,6 @@ export struct CameraPreviewComponent {
         'customScan.init failed',
         JSON.stringify(error),
       );
-      this.flutterMLKitScannerView.methodResult = null;
     }
   }
 
