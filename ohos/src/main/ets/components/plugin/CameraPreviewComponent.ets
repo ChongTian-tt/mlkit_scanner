@@ -13,15 +13,14 @@
  * limitations under the License.
  */
 
+import { display } from '@kit.ArkUI';
 import { Log } from '@ohos/flutter_ohos';
-import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
-import { PermissionsUtil } from './PermissionsUtil';
-import { CropRect, PluginConstants, PluginError } from './PluginConstants';
-import { ScannerOverlay } from './ScannerOverlay';
 import { common, AbilityLifecycleCallback } from '@kit.AbilityKit';
 import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
-import { display } from '@kit.ArkUI';
-import { window } from '@kit.ArkUI';
+import { PermissionsUtil } from './PermissionsUtil';
+import { ScannerOverlay } from './ScannerOverlay';
+import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
+import { CropRect, PluginConstants, PluginError, Size } from './PluginConstants';
 
 const TAG: string = 'MlkitScannerPlugin_CameraPreviewComponent';
 
@@ -43,10 +42,8 @@ export struct CameraPreviewComponent {
   @State cropRectState: CropRect | null = null;
   // whether scanner is active (changes overlay border color)
   @State isActive: boolean = false;
-  private isWindowRegistered: boolean = false;
   private isScanKitInitialized: boolean = false;
   private lifecycleId: number = -1;
-  private window = this.context.windowStage.getMainWindowSync();
 
   build() {
     Stack() {
@@ -75,11 +72,11 @@ export struct CameraPreviewComponent {
           })
             .key(
               'scanner-overlay-' +
-                this.cropRectState.scaleWidth + '-' +
-                this.cropRectState.scaleHeight + '-' +
-                this.cropRectState.offsetX + '-' +
-                this.cropRectState.offsetY + '-' +
-                this.isActive,
+              this.cropRectState.scaleWidth + '-' +
+              this.cropRectState.scaleHeight + '-' +
+              this.cropRectState.offsetX + '-' +
+              this.cropRectState.offsetY + '-' +
+              this.isActive,
             )
         }
       }
@@ -103,7 +100,6 @@ export struct CameraPreviewComponent {
     currentCameraPreview = this;
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
-    this.registerWindow();
     this.registerLifecycle();
     await this.onInitCameraPreviewRequested();
   }
@@ -129,30 +125,6 @@ export struct CameraPreviewComponent {
     await this.tryInitScanKit('initCameraPreview');
   }
 
-  // 窗口监听
-  registerWindow() {
-    if (this.isWindowRegistered) {
-      return;
-    }
-    try {
-      const callback = async (windowEventType: window.WindowEventType) => {
-        const scannerView = getCurrentMLKitScannerView();
-        if (windowEventType === 1 && scannerView) {
-          await this.refreshPermissionState('windowEvent');
-          if (!this.hasPermission) {
-            this.isActive = false;
-            return;
-          }
-          // scannerView.onHostForeground();
-        }
-      }
-      this.window.on('windowEvent', callback);
-      this.isWindowRegistered = true;
-    } catch (error) {
-      Log.e(TAG, `Failed to unregister window focus listener: ${error}`);
-    }
-  }
-
   registerLifecycle() {
     if (this.lifecycleId >= 0) {
       return;
@@ -168,6 +140,11 @@ export struct CameraPreviewComponent {
         onAbilityContinue: () => {},
         onAbilityForeground: async () => {
           // 解锁或回到前台时，恢复扫描
+          await this.refreshPermissionState('abilityForeground');
+          if (!this.hasPermission) {
+            this.isActive = false;
+            return;
+          }
           await getCurrentMLKitScannerView()?.onHostForeground();
         },
         onAbilityBackground: async () => {
@@ -179,6 +156,18 @@ export struct CameraPreviewComponent {
     } catch (error) {
       Log.e(TAG, `Failed to register lifecycle listener: ${error}`);
     }
+  }
+
+  unRegisterLifecycle() {
+    if (this.lifecycleId < 0) {
+      return;
+    }
+    try {
+      this.context.getApplicationContext().off('abilityLifecycle', this.lifecycleId);
+    } catch (error) {
+      Log.e(TAG, `Failed to unregister lifecycle listener: ${error}`);
+    }
+    this.lifecycleId = -1;
   }
 
   async onLoadHandle(): Promise<void> {
@@ -194,7 +183,7 @@ export struct CameraPreviewComponent {
   private async tryInitScanKit(scene: string): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult ||
-    !this.surfaceId || !this.hasPermission) {
+      !this.surfaceId || !this.hasPermission) {
       return;
     }
 
@@ -226,29 +215,10 @@ export struct CameraPreviewComponent {
     }
   }
 
-  // 移除窗口监听
-  unRegisterWindow() {
-    this.window.off('windowEvent')
-    this.isWindowRegistered = false;
-  }
-
-  unRegisterLifecycle() {
-    if (this.lifecycleId < 0) {
-      return;
-    }
-    try {
-      this.context.getApplicationContext().off('abilityLifecycle', this.lifecycleId);
-    } catch (error) {
-      Log.e(TAG, `Failed to unregister lifecycle listener: ${error}`);
-    }
-    this.lifecycleId = -1;
-  }
-
   aboutToDisappear() {
     Log.i(TAG, 'aboutToDisappear');
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
-    this.unRegisterWindow();
     this.unRegisterLifecycle();
   }
 

@@ -56,11 +56,16 @@ export interface CropRect {
   offsetY: number;
 }
 
-
 // 预览状态机
 export interface PreviewState {
   isRunning: boolean;
   isPausedByUser: boolean;
+}
+
+// 预览状态机
+export interface Size {
+  width: number;
+  height: number;
 }
 
 export interface DecodeState {

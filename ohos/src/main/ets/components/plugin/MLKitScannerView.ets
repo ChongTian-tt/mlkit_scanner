@@ -183,6 +183,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return new WrappedBuilder(CameraPreviewBuilder);
   }
 
+  public getPreviewSize(): Size {
+    return {
+      width: this.previewSize.width,
+      height: this.previewSize.height,
+    };
+  }
+
   setSurfaceId(surfaceId: string) {
     this.surfaceId = surfaceId;
     this.beginPreviewSession();
