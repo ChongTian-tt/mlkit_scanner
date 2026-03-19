@@ -71,6 +71,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     lastDecodedRawValue: '',
   };
   private desiredZoom: number | null = null;
+  private disposePromise: Promise<void> | null = null;
   private focusTimerId: number = -1;
   private resetFocusTimerId: number = -1;
   private scanDelayTimerId: number = -1;
@@ -233,7 +234,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         this.initCameraPreview(call, result);
         break;
       case 'dispose':
-        this.disposeHandle(result);
+        await this.disposeHandle(result);
         break;
       case 'toggleFlash':
         this.toggleFlash(result);
@@ -395,7 +396,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 开启预览流，恢复闪光灯状态
   private resumePreviewFlow(): void {
-    Log.i(TAG, 'resumePreviewFlow info: ' + JSON.stringify(this.previewState));
     // 预览流是开启状态
     if (this.previewState.isRunning) {
       return;
@@ -442,7 +442,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private emitScanResult(result: string): void {
-    Log.i(TAG, 'emitScanResult this.channel: ' + this.channel);
     this.channel?.invokeMethod(PluginConstants.scanResultMethod, {
       raw_value: result,
       display_value: result,
@@ -522,9 +521,17 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return converted;
   }
 
-  private disposeHandle(result: MethodResult): void {
-    // 释放相机资源
-    Log.i(TAG, 'dispose called');
+  private async runDisposeScanRelease(): Promise<void> {
+    try {
+      await customScan.stop();
+      await customScan.release();
+    } catch (error) {
+      Log.w(TAG, 'disposeScanResources release skipped: ' + JSON.stringify(error));
+    }
+  }
+
+  private resetStateAfterDispose(): void {
+    // 保底状态清理，避免重复进入销毁流程后状态残留
     this.clearScanDelayTimer();
     this.isCameraInitialized = false;
     this.endScanSession();
@@ -532,10 +539,36 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.resetDecodeState();
     this.desiredZoom = null;
     this.flashLightStatusBeforePause = false;
-    result.success(true);
+    this.previewState.isPausedByUser = false;
+  }
+
+  private async disposeScanResources(): Promise<void> {
+    if (!this.disposePromise) {
+      this.disposePromise = this.runDisposeScanRelease();
+    }
+
+    try {
+      await this.disposePromise;
+    } finally {
+      this.resetStateAfterDispose();
+    }
+  }
+
+  private async disposeHandle(result: MethodResult): Promise<void> {
+    try {
+      await this.disposeScanResources();
+      if (this.channel != null) {
+        this.channel.setMethodCallHandler(null);
+      }
+      result.success(true);
+    } catch (error) {
+      Log.e(TAG, `Failed to disposeHandle. Code: ${error.code}, message: ${error.message}`);
+      result.error('disposeHandle ', `Failed to disposeHandle. ${error.code}, message: ${error.message}`, null);
+    }
   }
 
   dispose() {
+    void this.disposeScanResources();
     if (this.channel != null) {
       this.channel.setMethodCallHandler(null);
     }
@@ -557,6 +590,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         this.openFlashLightSafely();
         result.success(true);
       }
+      this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
     } catch (error) {
       Log.e(TAG, `Failed to getFlashLightStatus. Code: ${error.code}, message: ${error.message}`);
     }
@@ -577,7 +611,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
     this.scanDelayMs = options.periodMs;
-
+    this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
     if (!this.isCameraInitialized) {
       if (this.previewState.isPausedByUser) {
         getCurrentCameraPreviewComponent()?.setScanActive(true);
@@ -627,6 +661,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
         return;
       }
+      this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
       // 已开启扫描或者已开启预览流时执行
       if (this.isScan || this.previewState.isRunning) {
         if (this.previewState.isPausedByUser) {
@@ -670,7 +705,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
     // 将扫描延迟设置为传入值的整数部分
     this.scanDelayMs = Math.trunc(delay);
-    Log.i(TAG, 'setScanDelay called, scanDelayMs=' + this.scanDelayMs);
     result.success(true);
   }
 
@@ -696,7 +730,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (comp && this.initialScannerParameters?.initialCropRect) {
       comp.applyCropRect();
     }
-    Log.i(TAG, 'updateConstraints called, previewSize=' + JSON.stringify(this.previewSize));
     result.success(true);
   }
 
@@ -739,17 +772,17 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (this.flashLightStatusBeforePause) {
       this.openFlashLightSafely();
     }
-    this.flashLightStatusBeforePause = false;
     result.success(true);
   }
 
   private getFlashLightStatusSafely(): boolean {
+    let flashLightStatus: boolean = false;
     try {
-      this.flashLightStatus = customScan.getFlashLightStatus();
+      flashLightStatus = customScan.getFlashLightStatus();
     } catch (error) {
       Log.e(TAG, `Failed to getFlashLightStatus. Code: ${error.code}, message: ${error.message}`);
     }
-    return this.flashLightStatus;
+    return flashLightStatus;
   }
 
   private closeFlashLightSafely(): void {
@@ -774,10 +807,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!this.isCameraInitialized) {
       return;
     }
-    if (this.flashLightStatusBeforePause) {
-      this.closeFlashLightSafely();
-    }
-
     // 用户触发pause后前后台切换
     if (this.previewState.isPausedByUser) {
       // 释放之前的预览流
@@ -806,10 +835,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         this.originalValue = '';
         customScan.init(this.buildScanOptions());
         customScan.start(this.buildViewControl(), this.scanCallback, this.frameCallback);
+
         if (this.flashLightStatusBeforePause) {
           this.openFlashLightSafely();
         }
-        this.flashLightStatusBeforePause = false;
       } catch (error) {
         Log.e(TAG, `Failed to onHostForeground. Code: ${error.code}, message: ${error.message}`);
       }
