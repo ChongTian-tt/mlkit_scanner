@@ -62,6 +62,7 @@ export struct CameraPreviewComponent {
           })
           .width(this.cameraWidth)
           .height(this.cameraHeight)
+          .backgroundColor(Color.White)
           .position({
             x: this.offsetX,
             y: this.offsetY,
@@ -165,13 +166,13 @@ export struct CameraPreviewComponent {
         onWindowStageDestroy: () => {},
         onAbilityDestroy: () => {},
         onAbilityContinue: () => {},
-        onAbilityForeground: () => {
+        onAbilityForeground: async () => {
           // 解锁或回到前台时，恢复扫描
-          getCurrentMLKitScannerView()?.onHostForeground();
+          await getCurrentMLKitScannerView()?.onHostForeground();
         },
-        onAbilityBackground: () => {
+        onAbilityBackground: async () => {
           // 锁屏或退到后台时，暂停扫描
-          getCurrentMLKitScannerView()?.onHostBackground();
+          await getCurrentMLKitScannerView()?.onHostBackground();
         },
       };
       this.lifecycleId = this.context.getApplicationContext().on('abilityLifecycle', callbacks as ESObject);
@@ -257,6 +258,10 @@ export struct CameraPreviewComponent {
 
   setScanActive(active: boolean): void {
     this.isActive = active;
+  }
+
+  getScanActive(): boolean {
+    return this.isActive;
   }
 
   // helper for external calls (e.g. setCropArea)

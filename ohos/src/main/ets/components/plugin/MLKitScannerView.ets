@@ -85,6 +85,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       if (data[0].originalValue) {
         this.originalValue = data[0].originalValue;
       }
+      Log.i(TAG, 'scanCallback info this.originalValue: ' + this.originalValue);
       // 开启连续扫描
       this.handleScanCallback(data);
     }
@@ -94,20 +95,19 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       Log.e(TAG, 'frame callback error: ' + JSON.stringify(error));
       return;
     }
-    if (!scanFrame.scanCodeRects?.length) {
+    if (!scanFrame.scanCodeRects?.length || !this.isScan) {
       return;
     }
-    // 动态获取YUV帧高度
+    // 转换坐标并检查 动态获取YUV帧高度
     if (scanFrame.height) {
       this.yuvFrameHeight = scanFrame.height;
     }
-    // 转换坐标并检查
-    if (this.isScan) {
-      const screenRect = this.convertYuvToScreenCoords(scanFrame.scanCodeRects[0]);
-      if (this.checkResultInScanBox(screenRect) && this.originalValue) {
-        this.emitScanResult(this.originalValue);
-        this.originalValue = '';
-      }
+    Log.i(TAG, 'frameCallback .........111');
+    const screenRect = this.convertYuvToScreenCoords(scanFrame.scanCodeRects[0]);
+    if (this.checkResultInScanBox(screenRect) && this.originalValue) {
+      Log.i(TAG, 'frameCallback .........222');
+      this.emitScanResult(this.originalValue);
+      this.originalValue = '';
     }
   }
 
@@ -226,7 +226,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private endPreviewSession(): void {
     this.previewState.isRunning = false;
   }
-
 
   async onMethodCall(call: MethodCall, result: MethodResult): Promise<void> {
     switch (call.method) {
@@ -365,9 +364,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!this.previewState.isRunning && !this.isScan) {
       return;
     }
-    this.endPreviewSession();
     try {
       await customScan.stop();
+      this.endPreviewSession();
     } catch (error) {
       Log.e(TAG, 'pausePreviewFlow error: ' + JSON.stringify(error));
     }
@@ -375,14 +374,15 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 开启预览流，恢复闪光灯状态
   private resumePreviewFlow(): void {
-    // 预览流是开启状态 且 是用户出发的pause
-    if (this.previewState.isRunning || this.previewState.isPausedByUser) {
+    Log.i(TAG, 'resumePreviewFlow info: ' + JSON.stringify(this.previewState));
+    // 预览流是开启状态
+    if (this.previewState.isRunning) {
       return;
     }
-    this.beginPreviewSession();
     try {
       // 重新初始化并启动扫描
       customScan.start(this.buildViewControl(), this.scanCallback, this.frameCallback);
+      this.beginPreviewSession();
     } catch (error) {
       Log.e(TAG, 'resumePreviewFlow error: ' + JSON.stringify(error));
     }
@@ -421,6 +421,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private emitScanResult(result: string): void {
+    Log.i(TAG, 'emitScanResult this.channel: ' + this.channel);
     this.channel?.invokeMethod(PluginConstants.scanResultMethod, {
       raw_value: result,
       display_value: result,
@@ -556,6 +557,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.scanDelayMs = options.periodMs;
 
     if (!this.isCameraInitialized) {
+      if (this.previewState.isPausedByUser) {
+        getCurrentCameraPreviewComponent()?.setScanActive(true);
+        result.success(true);
+        return;
+      }
       result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
       return;
     }
@@ -566,6 +572,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     // 处于扫描状态 或者 用户触发了pause时不做处理 只标记开启扫描
     if (this.isScan || this.previewState.isPausedByUser) {
       this.beginScanSession();
+      result.success(true);
       return;
     }
 
@@ -588,12 +595,22 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   // 取消扫描，保持预览
   private async cancelScan(result: MethodResult): Promise<void> {
     try {
+      if (!this.isCameraInitialized) {
+        if (this.previewState.isPausedByUser) {
+          getCurrentCameraPreviewComponent()?.setScanActive(false);
+          result.success(true);
+          return;
+        }
+        result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
+        return;
+      }
       // 已开启扫描或者已开启预览流时执行
       if (this.isScan || this.previewState.isRunning) {
         if (this.previewState.isPausedByUser) {
           //   只停止扫描的状态
           this.endScanSession();
           this.originalValue = '';
+          result.success(true);
           return;
         }
         // 停止扫描状态然后再次开启预览流
@@ -679,15 +696,23 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   public resumeCamera(result: MethodResult): void {
-    // 恢复相机
-    if (!this.isCameraInitialized) {
-      result.error(PluginError.CameraIsNotInitialized, 'Camera is not initialized', null);
-      return;
-    }
-    if (!this.previewState.isPausedByUser) {
+    if (!this.previewState.isPausedByUser && this.previewState.isRunning) {
       result.success(true);
       return;
     }
+    // 恢复相机
+    if (!this.isCameraInitialized) {
+      // 重新初始化相机预览流
+      this.initCustomScan();
+    }
+
+    // 获取当前组件的状态是否是激活状态
+    const comp = getCurrentCameraPreviewComponent();
+    if (comp) {
+      const active: boolean = comp.getScanActive();
+      this.isScan = active;
+    }
+    Log.e(TAG, `this.isScan: ${this.isScan} + this.flashLightStatusBeforePause: ${this.flashLightStatusBeforePause}`);
     this.previewState.isPausedByUser = false;
     this.resumePreviewFlow();
     if (this.flashLightStatusBeforePause) {
@@ -728,11 +753,25 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!this.isCameraInitialized) {
       return;
     }
-    this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
+    Log.e(TAG, `onHostBackground    this.flashLightStatusBeforePause: ${this.flashLightStatusBeforePause}`);
     if (this.flashLightStatusBeforePause) {
       this.closeFlashLightSafely();
     }
-    await this.pausePreviewFlow();
+
+    // 用户触发pause后前后台切换
+    if (this.previewState.isPausedByUser) {
+      // 释放之前的预览流
+      try {
+        Log.e(TAG, `onHostBackground customScan.release start`);
+        await customScan.release();
+        this.isCameraInitialized = false;
+      } catch (error) {
+        Log.e(TAG,
+          `Failed to onHostBackground. isPausedByUser == true. Code: ${error.code}, message: ${error.message}`);
+      }
+    } else {
+      await this.pausePreviewFlow();
+    }
   }
 
   public async onHostForeground(): Promise<void> {
@@ -741,13 +780,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
     // 用户触发pause后前后台切换
     if (this.previewState.isPausedByUser) {
-      // 结束后重新开启预览流
-      try {
-        await customScan.stop();
-        await customScan.release();
-      } catch (error) {
-        Log.e(TAG, `Failed to onHostForeground. isPausedByUser == true. Code: ${error.code}, message: ${error.message}`);
-      }
+
+      // try {
+      //   await customScan.stop();
+      //   await customScan.release();
+      // } catch (error) {
+      //   Log.e(TAG, `Failed to onHostForeground. isPausedByUser == true. Code: ${error.code}, message: ${error.message}`);
+      // }
     } else {
       try {
         // 结束后重新开启预览流
@@ -763,6 +802,15 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       } catch (error) {
         Log.e(TAG, `Failed to onHostForeground. Code: ${error.code}, message: ${error.message}`);
       }
+    }
+  }
+
+  private initCustomScan() {
+    try {
+      customScan.init(this.buildScanOptions());
+      this.isCameraInitialized = true;
+    } catch (error) {
+      Log.e(TAG, `Failed to initCustomScan. Code: ${error.code}, message: ${error.message}`);
     }
   }
 
