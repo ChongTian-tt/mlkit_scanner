@@ -1,9 +1,9 @@
-/** Enum describes what exactly will be recognized from the camera image. */
+// 枚举描述了将从摄像头图像中准确识别出的内容
 export enum RecognitionType {
   BarcodeRecognition = 0,
 }
 
-/** Describes image recognition configuration (OHOS equivalent of Android AnalyzeOptions). */
+// 描述图像识别配置
 export class MLKitScannerOptions {
   recognizeType: RecognitionType;
   periodMs: number;

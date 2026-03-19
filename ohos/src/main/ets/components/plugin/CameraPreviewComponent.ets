@@ -1,29 +1,29 @@
 /*
  * Copyright (c) 2026 SwanLink (Jiangsu) Technology Development Co., LTD.
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * Licensed under the Apache License, Version 2.0 (the 'License');
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an 'AS IS' BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
 
-import { Log } from "@ohos/flutter_ohos";
-import { getCurrentMLKitScannerView, MLKitScannerView } from "./MLKitScannerView";
-import { PermissionsUtil } from "./PermissionsUtil";
-import { CropRect, PluginConstants, PluginError } from "./PluginConstants";
-import { ScannerOverlay } from "./ScannerOverlay";
-import { common, AbilityLifecycleCallback } from "@kit.AbilityKit";
-import { customScan, scanBarcode, scanCore } from "@kit.ScanKit";
-import { display } from "@kit.ArkUI";
+import { Log } from '@ohos/flutter_ohos';
+import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
+import { PermissionsUtil } from './PermissionsUtil';
+import { CropRect, PluginConstants, PluginError } from './PluginConstants';
+import { ScannerOverlay } from './ScannerOverlay';
+import { common, AbilityLifecycleCallback } from '@kit.AbilityKit';
+import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
+import { display } from '@kit.ArkUI';
 import { window } from '@kit.ArkUI';
 
-const TAG: string = "MlkitScannerPlugin_CameraPreviewComponent";
+const TAG: string = 'MlkitScannerPlugin_CameraPreviewComponent';
 
 let currentCameraPreview: CameraPreviewComponent | null = null;
 
@@ -33,7 +33,7 @@ export struct CameraPreviewComponent {
   private context = this.getUIContext().getHostContext() as common.UIAbilityContext;
   @Prop flutterMLKitScannerView: MLKitScannerView | null = null;
   @State hasPermission: boolean = false;
-  @State surfaceId: string = "";
+  @State surfaceId: string = '';
   // width/height for the surface component – OHOS API only accepts numbers
   @State cameraWidth: number = 0; // full‑screen dims (required by XComponent)
   @State cameraHeight: number = 0;
@@ -53,7 +53,7 @@ export struct CameraPreviewComponent {
       // camera surface
       if (this.flutterMLKitScannerView && this.hasPermission) {
         XComponent({
-          id: "componentId",
+          id: 'componentId',
           type: XComponentType.SURFACE,
           controller: this.mXComponentController,
         })
@@ -142,7 +142,7 @@ export struct CameraPreviewComponent {
             this.isActive = false;
             return;
           }
-          scannerView.onHostForeground();
+          // scannerView.onHostForeground();
         }
       }
       this.window.on('windowEvent', callback);
@@ -244,7 +244,7 @@ export struct CameraPreviewComponent {
   }
 
   aboutToDisappear() {
-    Log.i(TAG, "aboutToDisappear");
+    Log.i(TAG, 'aboutToDisappear');
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.unRegisterWindow();
@@ -281,7 +281,7 @@ export struct CameraPreviewComponent {
         offsetY: initialCropRect.offsetY,
       };
     } catch (error) {
-      Log.e(TAG, "applyCropRect error: " + error);
+      Log.e(TAG, 'applyCropRect error: ' + error);
     }
   }
 }
