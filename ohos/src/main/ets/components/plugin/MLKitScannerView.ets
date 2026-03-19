@@ -73,6 +73,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private desiredZoom: number | null = null;
   private focusTimerId: number = -1;
   private resetFocusTimerId: number = -1;
+  private scanDelayTimerId: number = -1;
+  private isDelayed: boolean = false;
   private yuvFrameHeight: number = 0;
   // 处理扫描结果
   private scanCallback: AsyncCallback<Array<scanBarcode.ScanResult>> =
@@ -85,7 +87,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       if (data[0].originalValue) {
         this.originalValue = data[0].originalValue;
       }
-      Log.i(TAG, 'scanCallback info this.originalValue: ' + this.originalValue);
       // 开启连续扫描
       this.handleScanCallback(data);
     }
@@ -95,19 +96,18 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       Log.e(TAG, 'frame callback error: ' + JSON.stringify(error));
       return;
     }
-    if (!scanFrame.scanCodeRects?.length || !this.isScan) {
+    if (!scanFrame.scanCodeRects?.length || !this.isScan || this.isDelayed) {
       return;
     }
     // 转换坐标并检查 动态获取YUV帧高度
     if (scanFrame.height) {
       this.yuvFrameHeight = scanFrame.height;
     }
-    Log.i(TAG, 'frameCallback .........111');
     const screenRect = this.convertYuvToScreenCoords(scanFrame.scanCodeRects[0]);
     if (this.checkResultInScanBox(screenRect) && this.originalValue) {
-      Log.i(TAG, 'frameCallback .........222');
       this.emitScanResult(this.originalValue);
       this.originalValue = '';
+      this.startScanDelayWindow();
     }
   }
 
@@ -307,6 +307,27 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     });
   }
 
+  private clearScanDelayTimer(): void {
+    if (this.scanDelayTimerId >= 0) {
+      clearTimeout(this.scanDelayTimerId);
+      this.scanDelayTimerId = -1;
+    }
+    this.isDelayed = false;
+  }
+
+  // iOS-like delay gate: block result emission during delay window.
+  private startScanDelayWindow(): void {
+    this.clearScanDelayTimer();
+    if (this.scanDelayMs <= 0) {
+      return;
+    }
+    this.isDelayed = true;
+    this.scanDelayTimerId = setTimeout(() => {
+      this.scanDelayTimerId = -1;
+      this.isDelayed = false;
+    }, this.scanDelayMs) as number;
+  }
+
   // private getFocusPointForCropCenter(): scanBarcode.Point {
   //   const crop = this.getPreviewCropRect();
   //   const centerX = crop.left + crop.width / 2;
@@ -504,6 +525,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private disposeHandle(result: MethodResult): void {
     // 释放相机资源
     Log.i(TAG, 'dispose called');
+    this.clearScanDelayTimer();
     this.isCameraInitialized = false;
     this.endScanSession();
     this.endPreviewSession();
@@ -584,9 +606,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       }
     }
 
-    await this.waitDelay();
     // 开启扫描，开启预览流
     this.beginScanSession();
+    this.startScanDelayWindow();
     this.beginPreviewSession();
     this.startPreview();
     result.success(true);
@@ -595,6 +617,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   // 取消扫描，保持预览
   private async cancelScan(result: MethodResult): Promise<void> {
     try {
+      this.clearScanDelayTimer();
       if (!this.isCameraInitialized) {
         if (this.previewState.isPausedByUser) {
           getCurrentCameraPreviewComponent()?.setScanActive(false);
@@ -609,14 +632,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         if (this.previewState.isPausedByUser) {
           //   只停止扫描的状态
           this.endScanSession();
-          this.originalValue = '';
           result.success(true);
           return;
         }
         // 停止扫描状态然后再次开启预览流
         await customScan.stop();
         this.endScanSession();
-        this.originalValue = '';
         // 再次开启预览流
         this.beginPreviewSession();
         this.startPreview();
@@ -691,6 +712,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
     this.previewState.isPausedByUser = true;
     this.originalValue = '';
+    this.clearScanDelayTimer();
     await this.pausePreviewFlow();
     result.success(true);
   }
@@ -712,7 +734,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       const active: boolean = comp.getScanActive();
       this.isScan = active;
     }
-    Log.e(TAG, `this.isScan: ${this.isScan} + this.flashLightStatusBeforePause: ${this.flashLightStatusBeforePause}`);
     this.previewState.isPausedByUser = false;
     this.resumePreviewFlow();
     if (this.flashLightStatusBeforePause) {
@@ -753,7 +774,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!this.isCameraInitialized) {
       return;
     }
-    Log.e(TAG, `onHostBackground    this.flashLightStatusBeforePause: ${this.flashLightStatusBeforePause}`);
     if (this.flashLightStatusBeforePause) {
       this.closeFlashLightSafely();
     }
@@ -762,7 +782,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (this.previewState.isPausedByUser) {
       // 释放之前的预览流
       try {
-        Log.e(TAG, `onHostBackground customScan.release start`);
         await customScan.release();
         this.isCameraInitialized = false;
       } catch (error) {
@@ -778,16 +797,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!this.isCameraInitialized || !this.surfaceId) {
       return;
     }
-    // 用户触发pause后前后台切换
-    if (this.previewState.isPausedByUser) {
-
-      // try {
-      //   await customScan.stop();
-      //   await customScan.release();
-      // } catch (error) {
-      //   Log.e(TAG, `Failed to onHostForeground. isPausedByUser == true. Code: ${error.code}, message: ${error.message}`);
-      // }
-    } else {
+    // 非用户触发pause后前后台切换
+    if (!this.previewState.isPausedByUser) {
       try {
         // 结束后重新开启预览流
         await customScan.release();
