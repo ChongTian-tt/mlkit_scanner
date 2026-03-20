@@ -1,13 +1,26 @@
 /*
- * HarmonyOS port of the Android ScannerOverlay view.
- * Draws a semi-transparent mask over the camera preview with a cutout for the
- * scan area, and renders rounded L-shaped corner borders that change color
- * based on whether scanning is active (green) or inactive (grey).
+ * Copyright (C) 2026 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the 'License');
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an 'AS IS' BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 import { CropRect } from './PluginConstants';
 import { common2D, drawing } from '@kit.ArkGraphics2D';
 
+/**
+ * 在相机预览上绘制一个半透明的遮罩，并为其留出一个剪切区域
+ * 扫描区域，并渲染出会变色的圆角L形边框
+ * 根据扫描是处于活动状态（绿色）还是非活动状态（灰色）来判断。
+ */
 @Component
 export struct ScannerOverlay {
   private context: DrawingRenderingContext = new DrawingRenderingContext();
@@ -23,8 +36,8 @@ export struct ScannerOverlay {
   }
 
   /**
-   * Build the mask path: full-screen rect minus rounded crop rect cutout.
-   * Uses path boolean DIFFERENCE operation.
+   * 构建遮罩路径：全屏矩形减去圆角裁剪矩形剪切。
+   * 使用路径布尔差集操作。
    */
   private buildMaskPath(w: number, h: number): drawing.Path {
     const path = new drawing.Path();
@@ -39,10 +52,10 @@ export struct ScannerOverlay {
     const cornerLen = cropWidth * 0.05;
     const radius = cornerLen / 2;
 
-    // full screen rectangle
+    // 全屏矩形
     path.addRect({ left: 0, top: 0, right: w, bottom: h });
 
-    // rounded rect hole for the crop area (radius/2 matches the arc corner rounding)
+    // 裁剪区域的圆角矩形孔（半径/2与圆角弧度相匹配）
     const hole = new drawing.Path();
     const cropRectDef: common2D.Rect = {
       left: x,
@@ -58,8 +71,8 @@ export struct ScannerOverlay {
   }
 
   /**
-   * Build the corner border path: four L-shaped corners with rounded arcs.
-   * Each corner consists of moveTo → arcTo → lineTo, matching Android logic.
+   * 构建角落边界路径：四个带有圆弧的L形角落。
+   * 每个角点都由moveTo → arcTo → lineTo组成
    */
   private buildCornerPath(w: number, h: number): drawing.Path {
     const path = new drawing.Path();
@@ -74,22 +87,22 @@ export struct ScannerOverlay {
     const cornerLen = cropWidth * 0.05;
     const radius = cornerLen / 2;
 
-    // Top Left Corner: left arm → arc(180°,90°) → top arm
+    // 左上角：左臂 → 弧形（180°，90°） → 上臂
     path.moveTo(x, y + cornerLen);
     path.arcTo(x, y, x + radius, y + radius, 180, 90);
     path.lineTo(x + cornerLen, y);
 
-    // Top Right Corner: top arm → arc(270°,90°) → right arm
+    // 右上角：上臂 → 弧形（270°，90°）→ 右臂
     path.moveTo(x + cropWidth - cornerLen, y);
     path.arcTo(x + cropWidth - radius, y, x + cropWidth, y + radius, 270, 90);
     path.lineTo(x + cropWidth, y + cornerLen);
 
-    // Bottom Right Corner: right arm → arc(0°,90°) → bottom arm
+    // 右下角：右臂 → 弧形（0°，90°）→ 下臂
     path.moveTo(x + cropWidth, y + cropHeight - cornerLen);
     path.arcTo(x + cropWidth - radius, y + cropHeight - radius, x + cropWidth, y + cropHeight, 0, 90);
     path.lineTo(x + cropWidth - cornerLen, y + cropHeight);
 
-    // Bottom Left Corner: bottom arm → arc(90°,90°) → left arm
+    // 左下角：下臂 → 弧形（90°，90°）→ 左臂
     path.moveTo(x + cornerLen, y + cropHeight);
     path.arcTo(x, y + cropHeight - radius, x + radius, y + cropHeight, 90, 90);
     path.lineTo(x, y + cropHeight - cornerLen);
@@ -107,7 +120,7 @@ export struct ScannerOverlay {
 
     canvas.clear({ alpha: 0, red: 0, green: 0, blue: 0 });
 
-    // 1. Draw semi-transparent background mask
+    // 1. 绘制半透明背景遮罩
     const bgBrush = new drawing.Brush();
     const blackColor: common2D.Color = { alpha: 120, red: 0, green: 0, blue: 0 };
     bgBrush.setColor(blackColor);
@@ -115,7 +128,7 @@ export struct ScannerOverlay {
     canvas.drawPath(this.buildMaskPath(w, h));
     canvas.detachBrush();
 
-    // 2. Draw corner borders
+    // 2.绘制角落边框
     if (this.cropRect) {
       const pen = new drawing.Pen();
       pen.setStrokeWidth(6);

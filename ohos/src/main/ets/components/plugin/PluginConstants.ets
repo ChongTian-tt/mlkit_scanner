@@ -32,9 +32,6 @@ export class PluginConstants {
   static readonly SCAN_COMPONENT_WIDTH_100 = '100%';
 }
 
-/**
- * Plugin error codes aligned with Android PluginError enum.
- */
 export class PluginError {
   static readonly InitCameraError: string = '1';
   static readonly AuthorizationCameraError: string = '2';

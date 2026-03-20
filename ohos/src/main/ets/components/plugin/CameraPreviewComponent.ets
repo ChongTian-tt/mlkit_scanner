@@ -20,7 +20,7 @@ import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
 import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
 import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
-import { CropRect, PluginConstants, PluginError, Size } from './PluginConstants';
+import { CropRect, PluginConstants, PluginError } from './PluginConstants';
 
 const TAG: string = 'MlkitScannerPlugin_CameraPreviewComponent';
 
@@ -30,24 +30,23 @@ let currentCameraPreview: CameraPreviewComponent | null = null;
 export struct CameraPreviewComponent {
   private mXComponentController: XComponentController = new XComponentController();
   private context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+  private isScanKitInitialized: boolean = false;
+  private lifecycleId: number = -1;
   @Prop flutterMLKitScannerView: MLKitScannerView | null = null;
   @State hasPermission: boolean = false;
   @State surfaceId: string = '';
-  // width/height for the surface component – OHOS API only accepts numbers
-  @State cameraWidth: number = 0; // full‑screen dims (required by XComponent)
+  // xComponent 宽度/高度——OHOS API仅接受number类型
+  @State cameraWidth: number = 0;
   @State cameraHeight: number = 0;
   @State offsetX: number = 0;
   @State offsetY: number = 0;
-  // crop rect state passed to overlay
+  // 裁剪矩形状态
   @State cropRectState: CropRect | null = null;
-  // whether scanner is active (changes overlay border color)
+  //  扫描仪是否处于活动状态（改变覆盖边框颜色）
   @State isActive: boolean = false;
-  private isScanKitInitialized: boolean = false;
-  private lifecycleId: number = -1;
 
   build() {
     Stack() {
-      // camera surface
       if (this.flutterMLKitScannerView && this.hasPermission) {
         XComponent({
           id: 'componentId',
@@ -98,7 +97,7 @@ export struct CameraPreviewComponent {
     return this.isActive;
   }
 
-  async onLoadHandle(): Promise<void> {
+  private async onLoadHandle(): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
       this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
@@ -109,7 +108,6 @@ export struct CameraPreviewComponent {
   }
 
   async aboutToAppear(): Promise<void> {
-    // keep reference for outside updates
     currentCameraPreview = this;
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
@@ -124,7 +122,7 @@ export struct CameraPreviewComponent {
     this.unRegisterLifecycle();
   }
 
-  registerLifecycle() {
+  private registerLifecycle() {
     if (this.lifecycleId >= 0) {
       return;
     }
@@ -164,7 +162,7 @@ export struct CameraPreviewComponent {
     }
   }
 
-  unRegisterLifecycle() {
+  private unRegisterLifecycle() {
     if (this.lifecycleId < 0) {
       return;
     }
@@ -242,7 +240,6 @@ export struct CameraPreviewComponent {
   }
 
   applyCropRect() {
-    // preview size may already be provided by Flutter constraints; fallback to display size
     try {
       if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.initialScannerParameters ||
         !this.flutterMLKitScannerView.initialScannerParameters.initialCropRect) {
@@ -267,7 +264,6 @@ export struct CameraPreviewComponent {
   }
 }
 
-// export accessor for view class
 export function getCurrentCameraPreviewComponent(): CameraPreviewComponent | null {
   return currentCameraPreview;
 }

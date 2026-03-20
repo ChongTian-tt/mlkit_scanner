@@ -323,7 +323,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.isDelayed = false;
   }
 
-  // iOS-like delay gate: block result emission during delay window.
+  // 在延迟窗口期间阻止结果输出
   private startScanDelayWindow(): void {
     this.clearScanDelayTimer();
     if (this.scanDelayMs <= 0) {
