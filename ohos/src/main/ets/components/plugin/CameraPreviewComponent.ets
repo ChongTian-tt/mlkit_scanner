@@ -20,11 +20,30 @@ import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
 import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
 import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
-import { CropRect, PluginConstants, PluginError } from './PluginConstants';
+import { CropRect, PluginConstants, PluginError, Size } from './PluginConstants';
 
 const TAG: string = 'MlkitScannerPlugin_CameraPreviewComponent';
 
 let currentCameraPreview: CameraPreviewComponent | null = null;
+
+function parseAreaDimension(value: Object | undefined): number {
+  if (value === undefined) {
+    return 0;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function readOnAreaChangeSize(newValue: ESObject): Size {
+  const rec = newValue as Record<string, Object>;
+  return {
+    width: parseAreaDimension(rec['width']),
+    height: parseAreaDimension(rec['height']),
+  };
+}
 
 @Component
 export struct CameraPreviewComponent {
@@ -63,12 +82,15 @@ export struct CameraPreviewComponent {
             x: this.offsetX,
             y: this.offsetY,
           });
-        // scanner overlay on top of camera
+        // overlay 覆盖可见区域（与 Android 一致：crop 坐标相对于可见预览区域）
         if (this.cropRectState) {
           ScannerOverlay({
             cropRect: this.cropRectState,
             isActive: this.isActive,
           })
+            .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
+            .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
+            .position({ x: 0, y: 0 })
             .key(
               'scanner-overlay-' +
               this.cropRectState.scaleWidth + '-' +
@@ -80,9 +102,17 @@ export struct CameraPreviewComponent {
         }
       }
     }
-    .alignContent(Alignment.Bottom)
+    .alignContent(Alignment.Center)
     .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
     .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
+    .clip(true)
+    .onAreaChange((oldValue: ESObject, newValue: ESObject) => {
+      void oldValue;
+      const dims: Size = readOnAreaChangeSize(newValue);
+      if (dims.width > 0 && dims.height > 0) {
+        getCurrentMLKitScannerView()?.onPreviewHostAreaChange(dims.width, dims.height);
+      }
+    })
   }
 
   getSurfaceId(): string {
@@ -102,7 +132,6 @@ export struct CameraPreviewComponent {
     if (this.flutterMLKitScannerView) {
       this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
       this.flutterMLKitScannerView.setSurfaceId(this.surfaceId);
-      Log.i(TAG, `XComponent onLoad successs ${this.surfaceId}`);
       await this.tryInitScanKit('onLoad');
     }
   }
@@ -116,7 +145,6 @@ export struct CameraPreviewComponent {
   }
 
   aboutToDisappear() {
-    Log.i(TAG, 'aboutToDisappear');
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.unRegisterLifecycle();
@@ -180,7 +208,6 @@ export struct CameraPreviewComponent {
     if (this.flutterMLKitScannerView) {
       this.flutterMLKitScannerView.userGrant = this.hasPermission;
     }
-    Log.i(TAG, `${scene} permission result: ${this.hasPermission}`);
   }
 
   async onInitCameraPreviewRequested(): Promise<void> {
@@ -228,7 +255,6 @@ export struct CameraPreviewComponent {
       this.isScanKitInitialized = true;
       this.flutterMLKitScannerView.setCameraInitialized(true);
       this.flutterMLKitScannerView.methodResult.success(true);
-      Log.i(TAG, `${scene} customScan.init success`);
     } catch (error) {
       Log.e(TAG, `${scene} customScan init error: ` + error);
       this.flutterMLKitScannerView.methodResult?.error(
@@ -241,23 +267,33 @@ export struct CameraPreviewComponent {
 
   applyCropRect() {
     try {
-      if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.initialScannerParameters ||
-        !this.flutterMLKitScannerView.initialScannerParameters.initialCropRect) {
+      if (!this.flutterMLKitScannerView) {
         return;
       }
-      const initialCropRect = this.flutterMLKitScannerView.initialScannerParameters.initialCropRect;
-      if (this.cameraWidth === 0 || this.cameraHeight === 0) {
+      // 1. 设置 XComponent 尺寸：优先使用 previewSize 与 ViewControl 对齐，避免预览拉伸
+      const previewSize = this.flutterMLKitScannerView.getPreviewSize();
+      if (previewSize.width > 0 && previewSize.height > 0) {
+        this.cameraWidth = previewSize.width;
+        this.cameraHeight = previewSize.height;
+      } else if (this.cameraWidth === 0 || this.cameraHeight === 0) {
         this.cameraWidth = this.getUIContext().px2vp(display.getDefaultDisplaySync().width);
         this.cameraHeight = this.getUIContext().px2vp(display.getDefaultDisplaySync().height);
       }
-      this.offsetX = (this.cameraWidth / 2) * (1 + initialCropRect.offsetX) - this.cameraWidth / 2;
-      this.offsetY = (this.cameraHeight / 2) * (1 + initialCropRect.offsetY) - this.cameraHeight / 2;
-      this.cropRectState = {
-        scaleWidth: initialCropRect.scaleWidth,
-        scaleHeight: initialCropRect.scaleHeight,
-        offsetX: initialCropRect.offsetX,
-        offsetY: initialCropRect.offsetY,
-      };
+      // 2. XComponent 居中（Center Crop：可为负值以裁剪溢出，与 Android 一致）
+      const container = this.flutterMLKitScannerView.getContainerSize();
+      this.offsetX = container.width > 0 ? (container.width - this.cameraWidth) / 2 : 0;
+      this.offsetY = container.height > 0 ? (container.height - this.cameraHeight) / 2 : 0;
+      const initialCropRect = this.flutterMLKitScannerView.initialScannerParameters?.initialCropRect;
+      if (initialCropRect) {
+        this.cropRectState = {
+          scaleWidth: initialCropRect.scaleWidth,
+          scaleHeight: initialCropRect.scaleHeight,
+          offsetX: initialCropRect.offsetX,
+          offsetY: initialCropRect.offsetY,
+        };
+      } else {
+        this.cropRectState = null;
+      }
     } catch (error) {
       Log.e(TAG, 'applyCropRect error: ' + error);
     }
