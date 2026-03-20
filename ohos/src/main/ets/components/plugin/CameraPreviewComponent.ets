@@ -86,13 +86,26 @@ export struct CameraPreviewComponent {
     .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
   }
 
-  private async refreshPermissionState(scene: string): Promise<void> {
-    this.hasPermission = await PermissionsUtil.checkAndRequestCameraPermission(this.context);
+  getSurfaceId(): string {
+    return this.surfaceId;
+  }
+
+  setScanActive(active: boolean): void {
+    this.isActive = active;
+  }
+
+  getScanActive(): boolean {
+    return this.isActive;
+  }
+
+  async onLoadHandle(): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
-      this.flutterMLKitScannerView.userGrant = this.hasPermission;
+      this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
+      this.flutterMLKitScannerView.setSurfaceId(this.surfaceId);
+      Log.i(TAG, `XComponent onLoad successs ${this.surfaceId}`);
+      await this.tryInitScanKit('onLoad');
     }
-    Log.i(TAG, `${scene} permission result: ${this.hasPermission}`);
   }
 
   async aboutToAppear(): Promise<void> {
@@ -104,25 +117,11 @@ export struct CameraPreviewComponent {
     await this.onInitCameraPreviewRequested();
   }
 
-  async onInitCameraPreviewRequested(): Promise<void> {
-    this.flutterMLKitScannerView = getCurrentMLKitScannerView();
-    if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult) {
-      return;
-    }
-
-    await this.refreshPermissionState('initCameraPreview');
-    this.applyCropRect();
-    if (!this.hasPermission) {
-      this.flutterMLKitScannerView.methodResult.error(
-        PluginError.AuthorizationCameraError,
-        'Camera permission denied',
-        null,
-      );
-      this.flutterMLKitScannerView.methodResult = null;
-      return;
-    }
-
-    await this.tryInitScanKit('initCameraPreview');
+  aboutToDisappear() {
+    Log.i(TAG, 'aboutToDisappear');
+    currentCameraPreview = null;
+    this.isScanKitInitialized = false;
+    this.unRegisterLifecycle();
   }
 
   registerLifecycle() {
@@ -131,13 +130,20 @@ export struct CameraPreviewComponent {
     }
     try {
       const callbacks: AbilityLifecycleCallback = {
-        onAbilityCreate: () => {},
-        onWindowStageCreate: () => {},
-        onWindowStageActive: () => {},
-        onWindowStageInactive: () => {},
-        onWindowStageDestroy: () => {},
-        onAbilityDestroy: () => {},
-        onAbilityContinue: () => {},
+        onAbilityCreate: () => {
+        },
+        onWindowStageCreate: () => {
+        },
+        onWindowStageActive: () => {
+        },
+        onWindowStageInactive: () => {
+        },
+        onWindowStageDestroy: () => {
+        },
+        onAbilityDestroy: () => {
+        },
+        onAbilityContinue: () => {
+        },
         onAbilityForeground: async () => {
           // 解锁或回到前台时，恢复扫描
           await this.refreshPermissionState('abilityForeground');
@@ -170,14 +176,34 @@ export struct CameraPreviewComponent {
     this.lifecycleId = -1;
   }
 
-  async onLoadHandle(): Promise<void> {
+  private async refreshPermissionState(scene: string): Promise<void> {
+    this.hasPermission = await PermissionsUtil.checkAndRequestCameraPermission(this.context);
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
-      this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
-      this.flutterMLKitScannerView.setSurfaceId(this.surfaceId);
-      Log.i(TAG, `XComponent onLoad successs ${this.surfaceId}`);
-      await this.tryInitScanKit('onLoad');
+      this.flutterMLKitScannerView.userGrant = this.hasPermission;
     }
+    Log.i(TAG, `${scene} permission result: ${this.hasPermission}`);
+  }
+
+  async onInitCameraPreviewRequested(): Promise<void> {
+    this.flutterMLKitScannerView = getCurrentMLKitScannerView();
+    if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult) {
+      return;
+    }
+
+    await this.refreshPermissionState('initCameraPreview');
+    this.applyCropRect();
+    if (!this.hasPermission) {
+      this.flutterMLKitScannerView.methodResult.error(
+        PluginError.AuthorizationCameraError,
+        'Camera permission denied',
+        null,
+      );
+      this.flutterMLKitScannerView.methodResult = null;
+      return;
+    }
+
+    await this.tryInitScanKit('initCameraPreview');
   }
 
   private async tryInitScanKit(scene: string): Promise<void> {
@@ -215,26 +241,6 @@ export struct CameraPreviewComponent {
     }
   }
 
-  aboutToDisappear() {
-    Log.i(TAG, 'aboutToDisappear');
-    currentCameraPreview = null;
-    this.isScanKitInitialized = false;
-    this.unRegisterLifecycle();
-  }
-
-  getSurfaceId(): string {
-    return this.surfaceId;
-  }
-
-  setScanActive(active: boolean): void {
-    this.isActive = active;
-  }
-
-  getScanActive(): boolean {
-    return this.isActive;
-  }
-
-  // helper for external calls (e.g. setCropArea)
   applyCropRect() {
     // preview size may already be provided by Flutter constraints; fallback to display size
     try {
