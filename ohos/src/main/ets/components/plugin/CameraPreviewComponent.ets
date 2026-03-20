@@ -52,7 +52,8 @@ export struct CameraPreviewComponent {
   private isScanKitInitialized: boolean = false;
   private lifecycleId: number = -1;
   @Prop flutterMLKitScannerView: MLKitScannerView | null = null;
-  @State hasPermission: boolean = false;
+  @State canRenderCamera: boolean = false;
+  private hasPermission: boolean = false;
   @State surfaceId: string = '';
   // xComponent 宽度/高度——OHOS API仅接受number类型
   @State cameraWidth: number = 0;
@@ -66,7 +67,7 @@ export struct CameraPreviewComponent {
 
   build() {
     Stack() {
-      if (this.flutterMLKitScannerView && this.hasPermission) {
+      if (this.flutterMLKitScannerView && this.canRenderCamera) {
         XComponent({
           id: 'componentId',
           type: XComponentType.SURFACE,
@@ -174,6 +175,7 @@ export struct CameraPreviewComponent {
           // 解锁或回到前台时，恢复扫描
           await this.refreshPermissionState('abilityForeground');
           if (!this.hasPermission) {
+            this.canRenderCamera = false;
             this.isActive = false;
             return;
           }
@@ -208,6 +210,7 @@ export struct CameraPreviewComponent {
     if (this.flutterMLKitScannerView) {
       this.flutterMLKitScannerView.userGrant = this.hasPermission;
     }
+    Log.i(TAG, `${scene} permission result: ${this.hasPermission}`);
   }
 
   async onInitCameraPreviewRequested(): Promise<void> {
@@ -219,6 +222,7 @@ export struct CameraPreviewComponent {
     await this.refreshPermissionState('initCameraPreview');
     this.applyCropRect();
     if (!this.hasPermission) {
+      this.canRenderCamera = false;
       this.flutterMLKitScannerView.methodResult.error(
         PluginError.AuthorizationCameraError,
         'Camera permission denied',
@@ -228,6 +232,7 @@ export struct CameraPreviewComponent {
       return;
     }
 
+    this.canRenderCamera = true;
     await this.tryInitScanKit('initCameraPreview');
   }
 
