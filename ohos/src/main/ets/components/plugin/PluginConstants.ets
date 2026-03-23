@@ -13,9 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import { Permissions } from "@kit.AbilityKit";
 
 export class PluginConstants {
   static readonly channelName: string = 'mlkit_channel';
+  static readonly permissionName: Permissions = 'ohos.permission.CAMERA';
   static readonly cameraPlatformViewName: string = 'mlkit/camera_preview';
   static readonly initCameraMethod: string = 'initCameraPreview';
   static readonly resumeCameraMethod: string = 'resumeCameraMethod';

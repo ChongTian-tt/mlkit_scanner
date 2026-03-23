@@ -15,7 +15,7 @@
 
 import { display } from '@kit.ArkUI';
 import { Log } from '@ohos/flutter_ohos';
-import { common, AbilityLifecycleCallback } from '@kit.AbilityKit';
+import { common, AbilityLifecycleCallback, Want, AbilityConstant, UIAbility } from '@kit.AbilityKit';
 import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
 import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
@@ -129,6 +129,7 @@ export struct CameraPreviewComponent {
   }
 
   private async onLoadHandle(): Promise<void> {
+    Log.i(TAG, `onLoadHandle`);
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
       this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
@@ -138,6 +139,7 @@ export struct CameraPreviewComponent {
   }
 
   async aboutToAppear(): Promise<void> {
+    Log.i(TAG, `aboutToAppear`);
     currentCameraPreview = this;
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
@@ -146,6 +148,7 @@ export struct CameraPreviewComponent {
   }
 
   aboutToDisappear() {
+    Log.i(TAG, `aboutToDisappear`);
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.unRegisterLifecycle();
@@ -158,20 +161,37 @@ export struct CameraPreviewComponent {
     try {
       const callbacks: AbilityLifecycleCallback = {
         onAbilityCreate: () => {
+          Log.i(TAG, `onAbilityCreate`);
         },
         onWindowStageCreate: () => {
+          Log.i(TAG, `onWindowStageCreate`);
         },
         onWindowStageActive: () => {
+          Log.i(TAG, `onWindowStageActive`);
         },
         onWindowStageInactive: () => {
+          Log.i(TAG, `onWindowStageInactive`);
         },
         onWindowStageDestroy: () => {
+          Log.i(TAG, `onWindowStageDestroy`); 
         },
         onAbilityDestroy: () => {
+          Log.i(TAG, `onAbilityDestroy`);
         },
         onAbilityContinue: () => {
+          Log.i(TAG, `onAbilityContinue`);
+        },
+        onWindowStageRestore: () => {
+          Log.i(TAG, `onWindowStageRestore`);
+        },
+        onNewWant: (ability: UIAbility) => {
+          Log.i(TAG, `onNewWant`);
+
+          Log.i(TAG, `onNewWant, ability: ${ability.launchWant.abilityName}`);
         },
         onAbilityForeground: async () => {
+          Log.i(TAG, `onAbilityForeground`);
+
           // 解锁或回到前台时，恢复扫描
           await this.refreshPermissionState('abilityForeground');
           if (!this.hasPermission) {
@@ -182,6 +202,7 @@ export struct CameraPreviewComponent {
           await getCurrentMLKitScannerView()?.onHostForeground();
         },
         onAbilityBackground: async () => {
+          Log.i(TAG, `onAbilityBackground`);
           // 锁屏或退到后台时，暂停扫描
           await getCurrentMLKitScannerView()?.onHostBackground();
         },
@@ -205,8 +226,9 @@ export struct CameraPreviewComponent {
   }
 
   private async refreshPermissionState(scene: string): Promise<void> {
-    this.hasPermission = await PermissionsUtil.checkAndRequestCameraPermission(this.context);
+    this.hasPermission = await PermissionsUtil.checkAndRequestCameraPermission(this.context, PluginConstants.permissionName);
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
+    Log.i(TAG, `${scene}  this.flutterMLKitScannerView: ${this.flutterMLKitScannerView}`);
     if (this.flutterMLKitScannerView) {
       this.flutterMLKitScannerView.userGrant = this.hasPermission;
     }

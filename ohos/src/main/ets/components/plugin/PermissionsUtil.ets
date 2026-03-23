@@ -20,13 +20,14 @@ import {
   Permissions,
   Context
 } from '@kit.AbilityKit';
+import { Log } from '@ohos/flutter_ohos';
 
 const TAG = '[PermissionsUtil] :';
 
 export class PermissionsUtil {
   public static async checkAccessToken(permission: Permissions): Promise<abilityAccessCtrl.GrantStatus> {
     let atManager = abilityAccessCtrl.createAtManager();
-    let grantStatus: abilityAccessCtrl.GrantStatus = -1;
+    let grantStatus: abilityAccessCtrl.GrantStatus = abilityAccessCtrl.GrantStatus.PERMISSION_DENIED;
     let tokenId: number = 0;
     try {
       let bundleInfo: bundleManager.BundleInfo =
@@ -34,58 +35,70 @@ export class PermissionsUtil {
       let appInfo: bundleManager.ApplicationInfo = bundleInfo.appInfo;
       tokenId = appInfo.accessTokenId;
     } catch (error) {
-      console.error(TAG + 'Failed to get bundle info for self. error: %{public}s',
+      Log.e(TAG, 'Failed to get bundle info for self. error: %{public}s',
         JSON.stringify(error));
     }
     try {
       grantStatus = await atManager.checkAccessToken(tokenId, permission);
     } catch (error) {
-      console.error(TAG + 'Failed to check access token. error: %{public}s' + JSON.stringify(error));
+      Log.e(TAG, 'Failed to check access token. error: %{public}s' + JSON.stringify(error));
     }
     return grantStatus;
   }
 
-  public static async reqPermissionsFromUser(context: Context): Promise<number[]> {
-    console.info(TAG + 'reqPermissionsFromUser start ')
+  public static async reqPermissionsFromUser(context: Context, permission: Permissions): Promise<number[]> {
     let atManager = abilityAccessCtrl.createAtManager();
     let grantStatus: PermissionRequestResult = { permissions: [], authResults: [] }
     try {
-      grantStatus = await atManager.requestPermissionsFromUser(context, ['ohos.permission.CAMERA']);
+      grantStatus = await atManager.requestPermissionsFromUser(context, [permission]);
     } catch (error) {
-      console.error(TAG + 'Failed to check access token. error: %{public}s', JSON.stringify(error));
+      Log.e(TAG, 'Failed to check access token. error: %{public}s', JSON.stringify(error));
     }
     return grantStatus.authResults;
   }
 
   // 申请权限
-  public static async requestCameraPermission(context: Context): Promise<boolean> {
+  public static async requestCameraPermission(context: Context, permission: Permissions): Promise<boolean> {
     let valid = false;
-    let grantStatus = await PermissionsUtil.reqPermissionsFromUser(context);
+    let grantStatus = await PermissionsUtil.reqPermissionsFromUser(context, permission);
     let length: number = grantStatus.length;
     for (let i = 0; i < length; i++) {
       if (grantStatus[i] === 0) {
         valid = true;
-        console.info(TAG + 'requestCameraPermission success');
       } else {
-        console.info(TAG + 'no rtCameraPermission');
-        valid = false;
+        return await PermissionsUtil.re_authentication(context, permission);
       }
     }
     return valid;
   }
 
+
   // 检查权限 初始化相机 开始扫描
-  public static async checkAndRequestCameraPermission(context: Context): Promise<boolean>  {
+  public static async checkAndRequestCameraPermission(context: Context, permission: Permissions): Promise<boolean> {
 
     let valid = false;
-    const permissions: Array<Permissions> = ['ohos.permission.CAMERA'];
-    let grantStatus = await PermissionsUtil.checkAccessToken(permissions[0]);
-    console.log(TAG, 'checkAndRequestCameraPermission grantStatus ' + grantStatus);
+    let grantStatus = await PermissionsUtil.checkAccessToken(permission);
     if (grantStatus === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
       valid = true;
     } else {
-      valid = await PermissionsUtil.requestCameraPermission(context);
+      valid = await PermissionsUtil.requestCameraPermission(context, permission);
     }
     return valid;
+  }
+
+  public static async re_authentication(context: Context, permission: Permissions): Promise<boolean> {
+    let atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
+    try {
+      let data: Array<abilityAccessCtrl.GrantStatus> =
+        await atManager.requestPermissionOnSetting(context, [permission]);
+      if (data[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+        return true;
+      } else {
+        return false;
+      }
+    } catch (error) {
+      Log.e(TAG, 'checkAndRequestCameraPermission grantStatus ');
+      return false;
+    }
   }
 }
