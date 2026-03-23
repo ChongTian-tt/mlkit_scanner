@@ -61,7 +61,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   // 扫描延迟，单位是毫秒
   private scanDelayMs: number = 100;
   /**
-   * 与 Android setPreviewStreamSize(720,1280) 一致：预览缓冲为竖屏 9:16，禁止用横向比例以免拉变形。
+   * 预览缓冲为竖屏 9:16，禁止用横向比例以免拉变形。
    * Cover：在不变形前提下等比放大直至铺满宿主，超出部分由 Stack clip 裁掉（等同 CameraView center crop）。
    */
   private static readonly PREVIEW_RATIO_W: number = 9;
@@ -120,80 +120,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  /**
-   * 检查二维码是否在扫码框内（与 Android 一致：crop 相对于可见区域）
-   */
-  private checkResultInScanBox(scanCodeRect: scanBarcode.ScanCodeRect): boolean {
-    const cropRect = this.getActiveCropRect();
-    // 未设置裁剪框时默认全屏可识别
-    if (!cropRect) {
-      return true;
-    }
-
-    const baseWidth = this.containerSize.width;
-    const baseHeight = this.containerSize.height;
-    if (baseWidth <= 0 || baseHeight <= 0) {
-      return false;
-    }
-
-    const cropWidth = baseWidth * cropRect.scaleWidth;
-    const cropHeight = baseHeight * cropRect.scaleHeight;
-    const cropLeft = (baseWidth / 2) * (1 + cropRect.offsetX) - cropWidth / 2;
-    const cropTop = (baseHeight / 2) * (1 + cropRect.offsetY) - cropHeight / 2;
-    const cropRight = cropLeft + cropWidth;
-    const cropBottom = cropTop + cropHeight;
-
-    let codeLeft = Math.min(scanCodeRect.left, scanCodeRect.right);
-    let codeRight = Math.max(scanCodeRect.left, scanCodeRect.right);
-    let codeTop = Math.min(scanCodeRect.top, scanCodeRect.bottom);
-    let codeBottom = Math.max(scanCodeRect.top, scanCodeRect.bottom);
-    if (this.previewSize.width <= this.containerSize.width) {
-      const padX = (this.containerSize.width - this.previewSize.width) / 2;
-      codeLeft += padX;
-      codeRight += padX;
-    } else {
-      const cropX = (this.previewSize.width - this.containerSize.width) / 2;
-      codeLeft -= cropX;
-      codeRight -= cropX;
-    }
-    if (this.previewSize.height <= this.containerSize.height) {
-      const padY = (this.containerSize.height - this.previewSize.height) / 2;
-      codeTop += padY;
-      codeBottom += padY;
-    } else {
-      const cropY = (this.previewSize.height - this.containerSize.height) / 2;
-      codeTop -= cropY;
-      codeBottom -= cropY;
-    }
-    const inScanBox =
-      codeLeft >= cropLeft &&
-      codeRight <= cropRight &&
-      codeTop >= cropTop &&
-      codeBottom <= cropBottom;
-
-    return inScanBox;
-  }
-
-  /**
-   * 将YUV帧坐标转换为屏幕坐标
-   */
-  private convertYuvToScreenCoords(yuvRect: scanBarcode.ScanCodeRect): scanBarcode.ScanCodeRect {
-    if (!this.yuvFrameHeight) {
-      return yuvRect;
-    }
-    const ratio = this.previewSize.width / this.yuvFrameHeight;
-    const convertedLeft = (this.yuvFrameHeight - yuvRect.bottom) * ratio;
-    const convertedTop = yuvRect.left * ratio;
-    const convertedRight = (this.yuvFrameHeight - yuvRect.top) * ratio;
-    const convertedBottom = yuvRect.right * ratio;
-    return {
-      left: Math.round(convertedLeft),
-      top: Math.round(convertedTop),
-      right: Math.round(convertedRight),
-      bottom: Math.round(convertedBottom)
-    };
-  }
-
   constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: ESObject) {
     super();
     flutterMLKitScannerView = this;
@@ -202,6 +128,47 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.channel.setMethodCallHandler(this);
 
     this.previewSize = this.parsePreviewSize(args);
+  }
+
+  async onMethodCall(call: MethodCall, result: MethodResult): Promise<void> {
+    switch (call.method) {
+      case 'initCameraPreview':
+        this.initCameraPreview(call, result);
+        break;
+      case 'dispose':
+        await this.disposeHandle(result);
+        break;
+      case 'toggleFlash':
+        this.toggleFlash(result);
+        break;
+      case 'startScan':
+        await this.startScan(call, result);
+        break;
+      case 'cancelScan':
+        this.cancelScan(result);
+        break;
+      case 'setScanDelay':
+        this.setScanDelay(call, result);
+        break;
+      case 'updateConstraints':
+        this.updateConstraints(call, result);
+        break;
+      case 'pauseCameraMethod':
+        this.pauseCamera(result);
+        break;
+      case 'resumeCameraMethod':
+        this.resumeCamera(result);
+        break;
+      case 'setZoom':
+        this.setZoom(call, result);
+        break;
+      case 'setCropAreaMethod':
+        this.setCropArea(call, result);
+        break;
+      default:
+        result.notImplemented();
+        break;
+    }
   }
 
   public getView(): WrappedBuilder<[Params]> {
@@ -305,47 +272,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.previewState.isRunning = false;
   }
 
-  async onMethodCall(call: MethodCall, result: MethodResult): Promise<void> {
-    switch (call.method) {
-      case 'initCameraPreview':
-        this.initCameraPreview(call, result);
-        break;
-      case 'dispose':
-        await this.disposeHandle(result);
-        break;
-      case 'toggleFlash':
-        this.toggleFlash(result);
-        break;
-      case 'startScan':
-        await this.startScan(call, result);
-        break;
-      case 'cancelScan':
-        this.cancelScan(result);
-        break;
-      case 'setScanDelay':
-        this.setScanDelay(call, result);
-        break;
-      case 'updateConstraints':
-        this.updateConstraints(call, result);
-        break;
-      case 'pauseCameraMethod':
-        this.pauseCamera(result);
-        break;
-      case 'resumeCameraMethod':
-        this.resumeCamera(result);
-        break;
-      case 'setZoom':
-        this.setZoom(call, result);
-        break;
-      case 'setCropAreaMethod':
-        this.setCropArea(call, result);
-        break;
-      default:
-        result.notImplemented();
-        break;
-    }
-  }
-
+  // 归一化参数
   private normalizeArgs(rawArgs: ESObject): Record<string, Object> {
     if (!rawArgs || typeof rawArgs !== 'object') {
       return {};
@@ -509,6 +436,80 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 检查二维码是否在扫码框内（crop 相对于可见区域）
+   */
+  private checkResultInScanBox(scanCodeRect: scanBarcode.ScanCodeRect): boolean {
+    const cropRect = this.getActiveCropRect();
+    // 未设置裁剪框时默认全屏可识别
+    if (!cropRect) {
+      return true;
+    }
+
+    const baseWidth = this.containerSize.width;
+    const baseHeight = this.containerSize.height;
+    if (baseWidth <= 0 || baseHeight <= 0) {
+      return false;
+    }
+
+    const cropWidth = baseWidth * cropRect.scaleWidth;
+    const cropHeight = baseHeight * cropRect.scaleHeight;
+    const cropLeft = (baseWidth / 2) * (1 + cropRect.offsetX) - cropWidth / 2;
+    const cropTop = (baseHeight / 2) * (1 + cropRect.offsetY) - cropHeight / 2;
+    const cropRight = cropLeft + cropWidth;
+    const cropBottom = cropTop + cropHeight;
+
+    let codeLeft = Math.min(scanCodeRect.left, scanCodeRect.right);
+    let codeRight = Math.max(scanCodeRect.left, scanCodeRect.right);
+    let codeTop = Math.min(scanCodeRect.top, scanCodeRect.bottom);
+    let codeBottom = Math.max(scanCodeRect.top, scanCodeRect.bottom);
+    if (this.previewSize.width <= this.containerSize.width) {
+      const padX = (this.containerSize.width - this.previewSize.width) / 2;
+      codeLeft += padX;
+      codeRight += padX;
+    } else {
+      const cropX = (this.previewSize.width - this.containerSize.width) / 2;
+      codeLeft -= cropX;
+      codeRight -= cropX;
+    }
+    if (this.previewSize.height <= this.containerSize.height) {
+      const padY = (this.containerSize.height - this.previewSize.height) / 2;
+      codeTop += padY;
+      codeBottom += padY;
+    } else {
+      const cropY = (this.previewSize.height - this.containerSize.height) / 2;
+      codeTop -= cropY;
+      codeBottom -= cropY;
+    }
+    const inScanBox =
+      codeLeft >= cropLeft &&
+        codeRight <= cropRight &&
+        codeTop >= cropTop &&
+        codeBottom <= cropBottom;
+
+    return inScanBox;
+  }
+
+  /**
+   * 将YUV帧坐标转换为屏幕坐标
+   */
+  private convertYuvToScreenCoords(yuvRect: scanBarcode.ScanCodeRect): scanBarcode.ScanCodeRect {
+    if (!this.yuvFrameHeight) {
+      return yuvRect;
+    }
+    const ratio = this.previewSize.width / this.yuvFrameHeight;
+    const convertedLeft = (this.yuvFrameHeight - yuvRect.bottom) * ratio;
+    const convertedTop = yuvRect.left * ratio;
+    const convertedRight = (this.yuvFrameHeight - yuvRect.top) * ratio;
+    const convertedBottom = yuvRect.right * ratio;
+    return {
+      left: Math.round(convertedLeft),
+      top: Math.round(convertedTop),
+      right: Math.round(convertedRight),
+      bottom: Math.round(convertedBottom)
+    };
+  }
+
   private async initCameraPreview(call: MethodCall, result: MethodResult): Promise<void> {
     // 初始化相机预览
     if (!this.context) {
@@ -536,6 +537,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  // 递归转换映射
   private recursivelyConvertMap(obj: ESObject): Object {
     if (obj === null || typeof obj !== 'object') {
       return obj;
@@ -913,15 +915,15 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 将 Flutter 的 0~1 归一化值映射为 ScanKit 的绝对变焦比（与 Android 对齐）
-   * Android: 0~1 即 min~max；ScanKit: 1.0~maxZoom
+   * 将 Flutter 的 0~1 归一化值映射为 ScanKit 的绝对变焦比
+   * ScanKit: 1.0~maxZoom
    */
   private applyDesiredZoomIfPossible(): boolean {
     if (this.desiredZoom === null) {
       return false;
     }
     try {
-      // 与 iOS 一致：0~1 映射为 1x~6x，ScanKit setZoom 接收绝对倍数
+      // 0~1 映射为 1x~6x，ScanKit setZoom 接收绝对倍数
       const zoomRatio = 1 + this.desiredZoom * 5;
       customScan.setZoom(zoomRatio);
       return true;

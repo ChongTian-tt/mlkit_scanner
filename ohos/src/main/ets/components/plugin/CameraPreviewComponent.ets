@@ -15,7 +15,7 @@
 
 import { display } from '@kit.ArkUI';
 import { Log } from '@ohos/flutter_ohos';
-import { common, AbilityLifecycleCallback, Want, AbilityConstant, UIAbility } from '@kit.AbilityKit';
+import { common, AbilityLifecycleCallback } from '@kit.AbilityKit';
 import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
 import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
@@ -25,25 +25,6 @@ import { CropRect, PluginConstants, PluginError, Size } from './PluginConstants'
 const TAG: string = 'MlkitScannerPlugin_CameraPreviewComponent';
 
 let currentCameraPreview: CameraPreviewComponent | null = null;
-
-function parseAreaDimension(value: Object | undefined): number {
-  if (value === undefined) {
-    return 0;
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function readOnAreaChangeSize(newValue: ESObject): Size {
-  const rec = newValue as Record<string, Object>;
-  return {
-    width: parseAreaDimension(rec['width']),
-    height: parseAreaDimension(rec['height']),
-  };
-}
 
 @Component
 export struct CameraPreviewComponent {
@@ -83,7 +64,7 @@ export struct CameraPreviewComponent {
             x: this.offsetX,
             y: this.offsetY,
           });
-        // overlay 覆盖可见区域（与 Android 一致：crop 坐标相对于可见预览区域）
+        // overlay 覆盖可见区域（crop 坐标相对于可见预览区域）
         if (this.cropRectState) {
           ScannerOverlay({
             cropRect: this.cropRectState,
@@ -129,7 +110,6 @@ export struct CameraPreviewComponent {
   }
 
   private async onLoadHandle(): Promise<void> {
-    Log.i(TAG, `onLoadHandle`);
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
       this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
@@ -139,7 +119,6 @@ export struct CameraPreviewComponent {
   }
 
   async aboutToAppear(): Promise<void> {
-    Log.i(TAG, `aboutToAppear`);
     currentCameraPreview = this;
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
@@ -148,7 +127,6 @@ export struct CameraPreviewComponent {
   }
 
   aboutToDisappear() {
-    Log.i(TAG, `aboutToDisappear`);
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.unRegisterLifecycle();
@@ -161,37 +139,20 @@ export struct CameraPreviewComponent {
     try {
       const callbacks: AbilityLifecycleCallback = {
         onAbilityCreate: () => {
-          Log.i(TAG, `onAbilityCreate`);
         },
         onWindowStageCreate: () => {
-          Log.i(TAG, `onWindowStageCreate`);
         },
         onWindowStageActive: () => {
-          Log.i(TAG, `onWindowStageActive`);
         },
         onWindowStageInactive: () => {
-          Log.i(TAG, `onWindowStageInactive`);
         },
         onWindowStageDestroy: () => {
-          Log.i(TAG, `onWindowStageDestroy`); 
         },
         onAbilityDestroy: () => {
-          Log.i(TAG, `onAbilityDestroy`);
         },
         onAbilityContinue: () => {
-          Log.i(TAG, `onAbilityContinue`);
-        },
-        onWindowStageRestore: () => {
-          Log.i(TAG, `onWindowStageRestore`);
-        },
-        onNewWant: (ability: UIAbility) => {
-          Log.i(TAG, `onNewWant`);
-
-          Log.i(TAG, `onNewWant, ability: ${ability.launchWant.abilityName}`);
         },
         onAbilityForeground: async () => {
-          Log.i(TAG, `onAbilityForeground`);
-
           // 解锁或回到前台时，恢复扫描
           await this.refreshPermissionState('abilityForeground');
           if (!this.hasPermission) {
@@ -202,7 +163,6 @@ export struct CameraPreviewComponent {
           await getCurrentMLKitScannerView()?.onHostForeground();
         },
         onAbilityBackground: async () => {
-          Log.i(TAG, `onAbilityBackground`);
           // 锁屏或退到后台时，暂停扫描
           await getCurrentMLKitScannerView()?.onHostBackground();
         },
@@ -226,9 +186,9 @@ export struct CameraPreviewComponent {
   }
 
   private async refreshPermissionState(scene: string): Promise<void> {
-    this.hasPermission = await PermissionsUtil.checkAndRequestCameraPermission(this.context, PluginConstants.permissionName);
+    this.hasPermission =
+      await PermissionsUtil.checkAndRequestCameraPermission(this.context, PluginConstants.permissionName);
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
-    Log.i(TAG, `${scene}  this.flutterMLKitScannerView: ${this.flutterMLKitScannerView}`);
     if (this.flutterMLKitScannerView) {
       this.flutterMLKitScannerView.userGrant = this.hasPermission;
     }
@@ -306,7 +266,7 @@ export struct CameraPreviewComponent {
         this.cameraWidth = this.getUIContext().px2vp(display.getDefaultDisplaySync().width);
         this.cameraHeight = this.getUIContext().px2vp(display.getDefaultDisplaySync().height);
       }
-      // 2. XComponent 居中（Center Crop：可为负值以裁剪溢出，与 Android 一致）
+      // 2. XComponent 居中（Center Crop：可为负值以裁剪溢出）
       const container = this.flutterMLKitScannerView.getContainerSize();
       this.offsetX = container.width > 0 ? (container.width - this.cameraWidth) / 2 : 0;
       this.offsetY = container.height > 0 ? (container.height - this.cameraHeight) / 2 : 0;
@@ -329,4 +289,23 @@ export struct CameraPreviewComponent {
 
 export function getCurrentCameraPreviewComponent(): CameraPreviewComponent | null {
   return currentCameraPreview;
+}
+
+function parseAreaDimension(value: Object | undefined): number {
+  if (value === undefined) {
+    return 0;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function readOnAreaChangeSize(newValue: ESObject): Size {
+  const rec = newValue as Record<string, Object>;
+  return {
+    width: parseAreaDimension(rec['width']),
+    height: parseAreaDimension(rec['height']),
+  };
 }

@@ -86,6 +86,7 @@ export class PermissionsUtil {
     return valid;
   }
 
+  // 二次鉴权
   public static async re_authentication(context: Context, permission: Permissions): Promise<boolean> {
     let atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
     try {
