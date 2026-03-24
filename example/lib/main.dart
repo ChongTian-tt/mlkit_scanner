@@ -84,6 +84,10 @@ class _MyAppState extends State<MyApp> {
                         ? const IosScannerParameters(
                             cropRect: CropRect(scaleHeight: 0.7, scaleWidth: 0.7),
                           )
+                        : (defaultTargetPlatform == TargetPlatform.ohos)
+                        ? const OhosScannerParameters(
+                            cropRect: CropRect(scaleHeight: 0.7, scaleWidth: 0.7),
+                          )
                         : const AndroidScannerParameters(
                             cropRect: CropRect(scaleHeight: 0.7, scaleWidth: 0.7),
                           ),
@@ -94,7 +98,8 @@ class _MyAppState extends State<MyApp> {
                     },
                     onScannerInitialized: (controller) async {
                       _controller = controller;
-                      if (defaultTargetPlatform == TargetPlatform.iOS) {
+                      if (defaultTargetPlatform == TargetPlatform.iOS || 
+                      defaultTargetPlatform == TargetPlatform.ohos) {
                         _iosCameras = await MLKitUtils().getIosAvailableCameras();
                         _setNextIosCamera();
                       }
@@ -211,7 +216,8 @@ class _MyAppState extends State<MyApp> {
               ),
               onPressed: _setNextCropArea,
             ),
-            if (defaultTargetPlatform == TargetPlatform.iOS)
+            if (defaultTargetPlatform == TargetPlatform.iOS ||
+             defaultTargetPlatform == TargetPlatform.ohos)
               TextButton(
                 child: Text(
                   '$_cameraIndex: $_cameraPosition, $_cameraType',

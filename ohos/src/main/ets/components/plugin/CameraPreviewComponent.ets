@@ -16,7 +16,6 @@
 import { display } from '@kit.ArkUI';
 import { Log } from '@ohos/flutter_ohos';
 import { common, AbilityLifecycleCallback } from '@kit.AbilityKit';
-import { customScan, scanBarcode, scanCore } from '@kit.ScanKit';
 import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
 import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
@@ -220,35 +219,28 @@ export struct CameraPreviewComponent {
 
   private async tryInitScanKit(scene: string): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
-    if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult ||
-      !this.surfaceId || !this.hasPermission) {
+    if (!this.flutterMLKitScannerView || !this.surfaceId || !this.hasPermission) {
       return;
     }
-
-    if (this.isScanKitInitialized || this.flutterMLKitScannerView.isCameraInitialized) {
-      this.flutterMLKitScannerView.methodResult.success(true);
-      this.flutterMLKitScannerView.methodResult = null;
-      return;
-    }
-
-    const options: scanBarcode.ScanOptions = {
-      scanTypes: [scanCore.ScanType.ALL],
-      enableMultiMode: false,
-      enableAlbum: false,
-    };
 
     try {
-      customScan.init(options);
-      this.isScanKitInitialized = true;
-      this.flutterMLKitScannerView.setCameraInitialized(true);
-      this.flutterMLKitScannerView.methodResult.success(true);
+      if (!this.isScanKitInitialized || !this.flutterMLKitScannerView.isCameraInitialized) {
+        this.flutterMLKitScannerView.setCameraInitialized(true);
+        this.isScanKitInitialized = true;
+      }
+
+      if (this.flutterMLKitScannerView.methodResult) {
+        this.flutterMLKitScannerView.methodResult.success(true);
+        this.flutterMLKitScannerView.methodResult = null;
+      }
     } catch (error) {
-      Log.e(TAG, `${scene} customScan init error: ` + error);
+      Log.e(TAG, `${scene} camera init error: ` + error);
       this.flutterMLKitScannerView.methodResult?.error(
         PluginError.InitCameraError,
-        'customScan.init failed',
+        'camera init failed',
         JSON.stringify(error),
       );
+      this.flutterMLKitScannerView.methodResult = null;
     }
   }
 

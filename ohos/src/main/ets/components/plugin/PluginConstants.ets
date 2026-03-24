@@ -31,6 +31,8 @@ export class PluginConstants {
   static readonly scanResultMethod: string = 'onScanResult';
   static readonly setZoomMethod: string = 'setZoom';
   static readonly setCropAreaMethod: string = 'setCropAreaMethod';
+  static readonly getIosAvailableCamerasMethod: string = 'getIosAvailableCameras';
+  static readonly setIosCameraMethod: string = 'setIosCamera';
   static readonly SCAN_COMPONENT_WIDTH_100 = '100%';
 }
 
@@ -45,7 +47,13 @@ export class PluginError {
 
 export interface OhosScannerParameters {
   initialZoom?: number;
+  initialCamera?: OhosInitialCamera;
   initialCropRect?: CropRect;
+}
+
+export interface OhosInitialCamera {
+  position: number;
+  type: number;
 }
 
 export interface CropRect {
