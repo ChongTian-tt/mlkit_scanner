@@ -38,6 +38,9 @@ class _MyAppState extends State<MyApp> {
   var _currentCropAreaIndex = 0;
 
   void _setNextIosCamera() {
+    if (_iosCameras.isEmpty) {
+      return;
+    }
     _cameraIndex = (_cameraIndex + 1) % _iosCameras.length;
     _controller!.setIosCamera(position: _iosCameras[_cameraIndex].position, type: _iosCameras[_cameraIndex].type);
     _resetZoom();
@@ -45,6 +48,43 @@ class _MyAppState extends State<MyApp> {
       _cameraType = _iosCameras[_cameraIndex].type.name;
       _cameraPosition = _iosCameras[_cameraIndex].position.name;
     });
+  }
+
+  void _setNextRearCameraType() {
+    if (_iosCameras.isEmpty) {
+      return;
+    }
+    final rearIndexes = <int>[];
+    for (var i = 0; i < _iosCameras.length; i++) {
+      if (_iosCameras[i].position == IosCameraPosition.back) {
+        rearIndexes.add(i);
+      }
+    }
+    if (rearIndexes.isEmpty) {
+      return;
+    }
+    final currentRearPos = rearIndexes.indexOf(_cameraIndex);
+    final nextRearPos = currentRearPos >= 0
+        ? (currentRearPos + 1) % rearIndexes.length
+        : 0;
+    _cameraIndex = rearIndexes[nextRearPos];
+    _controller!.setIosCamera(position: _iosCameras[_cameraIndex].position, type: _iosCameras[_cameraIndex].type);
+    _resetZoom();
+    setState(() {
+      _cameraType = _iosCameras[_cameraIndex].type.name;
+      _cameraPosition = _iosCameras[_cameraIndex].position.name;
+    });
+  }
+
+  String _getCameraListDescription() {
+    if (_iosCameras.isEmpty) {
+      return 'no cameras';
+    }
+    return _iosCameras
+        .asMap()
+        .entries
+        .map((entry) => '${entry.key}:${entry.value.position.name}/${entry.value.type.name}')
+        .join(' | ');
   }
 
   // 切换扫描区域
@@ -218,12 +258,31 @@ class _MyAppState extends State<MyApp> {
             ),
             if (defaultTargetPlatform == TargetPlatform.iOS ||
              defaultTargetPlatform == TargetPlatform.ohos)
-              TextButton(
-                child: Text(
-                  '$_cameraIndex: $_cameraPosition, $_cameraType',
-                  textAlign: TextAlign.center,
-                ),
-                onPressed: _setNextIosCamera,
+              Column(
+                children: [
+                  TextButton(
+                    child: Text(
+                      '$_cameraIndex: $_cameraPosition, $_cameraType',
+                      textAlign: TextAlign.center,
+                    ),
+                    onPressed: _setNextIosCamera,
+                  ),
+                  TextButton(
+                    child: const Text(
+                      'Next rear camera type',
+                      textAlign: TextAlign.center,
+                    ),
+                    onPressed: _setNextRearCameraType,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      _getCameraListDescription(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
               ),
           ],
         ),

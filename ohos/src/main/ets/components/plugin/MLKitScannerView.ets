@@ -328,7 +328,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
     try {
-      await this.pausePreviewFlow();
+      const service = this.getCameraService();
+      await service?.preFrontRelease(false);
+      this.endPreviewSession();
       await this.startPreview();
       this.applyDesiredZoomIfPossible();
     } catch (error) {
@@ -542,7 +544,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       }
       this.bindFrameListener();
       this.beginPreviewSession();
-      Log.i(TAG, `startPreview started: surfaceId=${this.surfaceId}, cameraId=${this.selectedCameraId}`);
       this.applyDesiredZoomIfPossible();
     } catch (error) {
       Log.e(TAG, 'startPreview error ' + JSON.stringify(error));
@@ -749,12 +750,18 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
     try {
+      const service = this.getCameraService();
+      const hasFlash = service?.hasFlash() ?? false;
       this.flashLightStatus = this.getFlashLightStatusSafely();
       // 根据当前闪光灯状态，选择开启或关闭闪光灯
       if (this.flashLightStatus) {
         this.closeFlashLightSafely();
         result.success(true);
       } else {
+        if (!hasFlash) {
+          result.error(PluginError.DeviceHasNotFlash, 'The current camera does not support flash', null);
+          return;
+        }
         this.openFlashLightSafely();
         result.success(true);
       }
@@ -995,10 +1002,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  private initCustomScan() {
-    this.isCameraInitialized = true;
-  }
-
   private parseZoomValue(args: ESObject): number | null {
     if (args === null || args === undefined) {
       return null;
@@ -1119,6 +1122,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     const args = this.normalizeArgs(call.args as ESObject);
     const position = Number(args['position']);
     const type = Number(args['type']);
+    Log.i(TAG, `setIosCamera called with position=${position}, type=${type}`);
     if (!Number.isFinite(position) || !Number.isFinite(type)) {
       result.error(PluginError.InvalidArguments, 'Invalid camera arguments, position/type required', null);
       return;
@@ -1161,6 +1165,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       void this.restartPreviewAfterLayoutChange();
     }
 
+    // 日志字段说明：
+    // cameraId: 实际切换到的 CameraKit 设备 ID；
+    // position: 兼容 iOS 的镜头朝向编码（1=后置, 2=前置）；
+    // type: 兼容 iOS 的镜头类型编码（0=广角, 1=长焦, 3=超广角...）。
     Log.i(
       TAG,
       'setIosCamera applied. ' +

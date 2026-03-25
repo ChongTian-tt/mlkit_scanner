@@ -23,7 +23,9 @@ const TAG = '[CameraService]:';
 
 export class CameraService {
   public cameraManager: camera.CameraManager | undefined = undefined;
+  private static readonly CAMERA_CACHE_TTL_MS: number = 3000;
   private camerasDevices: Array<camera.CameraDevice> = [];
+  private camerasLoadedAtMs: number = 0;
   private curcamerasDevice: camera.CameraDevice | undefined = undefined;
   private cameraInput: camera.CameraInput | undefined = undefined;
   private photoOutput: camera.PhotoOutput | undefined = undefined;
@@ -49,14 +51,27 @@ export class CameraService {
     if (!this.context) {
       return false;
     }
+
+    const now = Date.now();
+    const useCache =
+      this.cameraManager !== undefined &&
+      this.camerasDevices.length > 0 &&
+      now - this.camerasLoadedAtMs < CameraService.CAMERA_CACHE_TTL_MS;
+    if (useCache) {
+      return true;
+    }
+
     try {
       if (!this.cameraManager) {
         this.cameraManager = camera.getCameraManager(this.context);
       }
       this.camerasDevices = this.cameraManager.getSupportedCameras() ?? [];
+      this.camerasLoadedAtMs = now;
+      Log.i(TAG, `this.camerasDevices length= ${this.camerasDevices.length}, info:${JSON.stringify(this.camerasDevices)}`);
       return this.camerasDevices.length > 0;
     } catch (error) {
       Log.e(TAG, 'safeLoadCameras failed: ' + JSON.stringify(error));
+      this.camerasLoadedAtMs = 0;
       return false;
     }
   }
@@ -72,14 +87,29 @@ export class CameraService {
   }
 
   private mapTypeToIosCode(type: camera.CameraType): number {
-    const typeRecord = camera.CameraType as ESObject as Record<string, number>;
-    if (type === typeRecord['CAMERA_TYPE_TELEPHOTO']) {
+    const typeName = this.getCameraTypeName(type).toUpperCase();
+    // 长焦
+    if (typeName.indexOf('TELE') >= 0) {
       return 1;
     }
-    if (type === typeRecord['CAMERA_TYPE_ULTRA_WIDE']) {
+    // 超广角
+    if (typeName.indexOf('ULTRA') >= 0 && typeName.indexOf('WIDE') >= 0) {
       return 3;
     }
     return 0;
+  }
+
+  private getCameraTypeName(type: camera.CameraType): string {
+    const typeRecord = camera.CameraType as ESObject as Record<string, number>;
+    const rawType = Number(type);
+    const keys = Object.keys(typeRecord);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (typeRecord[key] === rawType) {
+        return key;
+      }
+    }
+    return `UNKNOWN_${rawType}`;
   }
 
   public getAvailableCameras(): Array<Record<string, number | string>> {
@@ -87,14 +117,24 @@ export class CameraService {
       return [];
     }
 
+
     const result: Array<Record<string, number | string>> = [];
     for (const device of this.camerasDevices) {
+      // 映射为 iOS 语义的 position/type code，方便 Flutter 端按需选用，同时保留原始信息以供调试和扩展使用。
+      const mappedPosition = this.mapPositionToIosCode(device.cameraPosition);
+      // iOS 设备通常会有明确的主摄/前摄和超广角/长焦等类型区分，而 Android 设备的类型定义较为模糊且不完全对齐 iOS，映射时会尽量识别常见的关键词，但仍可能存在不准确或无法识别的情况。
+      const mappedType = this.mapTypeToIosCode(device.cameraType);
+      // 日志记录原始和映射后的信息，便于分析设备差异和调试。
+      const typeName = this.getCameraTypeName(device.cameraType);
+
       result.push({
         'cameraId': device.cameraId,
-        'position': this.mapPositionToIosCode(device.cameraPosition),
-        'type': this.mapTypeToIosCode(device.cameraType),
+        'position': mappedPosition,
+        'type': mappedType,
       });
     }
+
+    Log.i(TAG, `getAvailableCameras total=${result.length}`);
     return result;
   }
 
@@ -121,9 +161,11 @@ export class CameraService {
     this.cameraManager = cameraManager;
     try {
       this.camerasDevices = this.cameraManager.getSupportedCameras() ?? [];
+      this.camerasLoadedAtMs = Date.now();
     } catch (error) {
       Log.e(TAG, 'createCamera failed: ' + JSON.stringify(error));
       this.camerasDevices = [];
+      this.camerasLoadedAtMs = 0;
     }
   }
 
