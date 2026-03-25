@@ -23,24 +23,36 @@ const TAG = '[CameraService]:';
 
 export class CameraService {
   public cameraManager: camera.CameraManager | undefined = undefined;
+  // 相机缓存，避免频繁调用 getSupportedCameras 导致性能问题
   private static readonly CAMERA_CACHE_TTL_MS: number = 3000;
-  private camerasDevices: Array<camera.CameraDevice> = [];
   private camerasLoadedAtMs: number = 0;
+  private camerasDevices: Array<camera.CameraDevice> = [];
+  // 当前使用的相机设备
   private curcamerasDevice: camera.CameraDevice | undefined = undefined;
+  // 相机设备输入对象
   private cameraInput: camera.CameraInput | undefined = undefined;
+  // 拍照会话中使用的输出信息 目前似乎未赋值
   private photoOutput: camera.PhotoOutput | undefined = undefined;
+  // 预览输出类
   private previewOutput: camera.PreviewOutput | undefined = undefined;
+  // 普通拍照模式会话类
   private photoSession: camera.PhotoSession | null = null;
   private context: Context | null = null;
+  // 标记是否已停止，避免在停止后继续处理预览帧导致错误
   private isStop: boolean = false;
+  // 解码节流，避免过于频繁地对预览帧进行解码，导致性能问题和重复结果
   private lastDecodeAtMs: number = 0;
+  // TODO: 解码尝试计数，仅用于日志记录，帮助分析解码频率和成功率
   private decodeAttemptCount: number = 0;
+  // 图像接收器，用于接收相机预览帧并进行扫码解码
   public imageReceiver: image.ImageReceiver;
 
   constructor(context: Context, imgReceiver?: image.ImageReceiver) {
     this.context = context;
+    // TODO: 固定使用 1920x1080 的预览分辨率，兼容性较好且性能可控。实际使用中会根据设备支持情况进行回退选择。
     const previewSize: camera.Size = { width: 1920, height: 1080 } as camera.Size;
     if (imgReceiver === undefined) {
+      // 通过图片大小、图片格式、容量创建ImageReceiver实例
       this.imageReceiver = image.createImageReceiver(previewSize, image.ImageFormat.JPEG, 1);
     } else {
       this.imageReceiver = image.createImageReceiver(previewSize, imgReceiver.format, imgReceiver.capacity);
@@ -65,9 +77,10 @@ export class CameraService {
       if (!this.cameraManager) {
         this.cameraManager = camera.getCameraManager(this.context);
       }
+      // 获取设备支持的相机列表
       this.camerasDevices = this.cameraManager.getSupportedCameras() ?? [];
       this.camerasLoadedAtMs = now;
-      Log.i(TAG, `this.camerasDevices length= ${this.camerasDevices.length}, info:${JSON.stringify(this.camerasDevices)}`);
+      Log.i(TAG, `this.camerasDevices length= ${this.camerasDevices.length}`);
       return this.camerasDevices.length > 0;
     } catch (error) {
       Log.e(TAG, 'safeLoadCameras failed: ' + JSON.stringify(error));
@@ -76,6 +89,7 @@ export class CameraService {
     }
   }
 
+  // 映射 dart侧传入的 position
   private mapPositionToIosCode(position: camera.CameraPosition): number {
     if (position === camera.CameraPosition.CAMERA_POSITION_BACK) {
       return 1;
@@ -83,9 +97,11 @@ export class CameraService {
     if (position === camera.CameraPosition.CAMERA_POSITION_FRONT) {
       return 2;
     }
+    // 相对于设备屏幕没有固定的朝向的相机
     return 0;
   }
 
+  // 映射 dart侧传入的 type
   private mapTypeToIosCode(type: camera.CameraType): number {
     const typeName = this.getCameraTypeName(type).toUpperCase();
     // 长焦
@@ -96,9 +112,11 @@ export class CameraService {
     if (typeName.indexOf('ULTRA') >= 0 && typeName.indexOf('WIDE') >= 0) {
       return 3;
     }
+    // 默认相机类型
     return 0;
   }
 
+  // 获取 camera type 的字符串名称
   private getCameraTypeName(type: camera.CameraType): string {
     const typeRecord = camera.CameraType as ESObject as Record<string, number>;
     const rawType = Number(type);
@@ -112,19 +130,17 @@ export class CameraService {
     return `UNKNOWN_${rawType}`;
   }
 
+  // 获取可用的相机列表
   public getAvailableCameras(): Array<Record<string, number | string>> {
     if (!this.safeLoadCameras()) {
       return [];
     }
 
-
     const result: Array<Record<string, number | string>> = [];
     for (const device of this.camerasDevices) {
-      // 映射为 iOS 语义的 position/type code，方便 Flutter 端按需选用，同时保留原始信息以供调试和扩展使用。
       const mappedPosition = this.mapPositionToIosCode(device.cameraPosition);
-      // iOS 设备通常会有明确的主摄/前摄和超广角/长焦等类型区分，而 Android 设备的类型定义较为模糊且不完全对齐 iOS，映射时会尽量识别常见的关键词，但仍可能存在不准确或无法识别的情况。
       const mappedType = this.mapTypeToIosCode(device.cameraType);
-      // 日志记录原始和映射后的信息，便于分析设备差异和调试。
+      // TODO: 日志记录原始和映射后的信息，便于分析设备差异和调试。
       const typeName = this.getCameraTypeName(device.cameraType);
 
       result.push({
@@ -138,6 +154,7 @@ export class CameraService {
     return result;
   }
 
+  // 根据 dart侧传入的 position 和 type，查找最匹配的 cameraId，优先级为 position+type > position > 任意可用
   public findCameraIdByIosCodes(positionCode: number, typeCode: number): string | undefined {
     const cameras = this.getAvailableCameras();
     if (cameras.length === 0) {
@@ -169,48 +186,26 @@ export class CameraService {
     }
   }
 
-  getCameraInfo(front: boolean = false): camera.CameraDevice | undefined {
-    if (!this.safeLoadCameras()) {
-      return undefined;
-    }
-    const targetPosition = front
-      ? camera.CameraPosition.CAMERA_POSITION_FRONT
-      : camera.CameraPosition.CAMERA_POSITION_BACK;
-    this.curcamerasDevice =
-      this.camerasDevices.find((d) => d.cameraPosition === targetPosition) ?? this.camerasDevices[0];
-    return this.curcamerasDevice;
-  }
-
-  hasCamera(type: string = 'front'): boolean {
-    if (!this.safeLoadCameras()) {
-      return false;
-    }
-    const targetPosition = type === 'front'
-      ? camera.CameraPosition.CAMERA_POSITION_FRONT
-      : camera.CameraPosition.CAMERA_POSITION_BACK;
-    return this.camerasDevices.some((d) => d.cameraPosition === targetPosition);
-  }
-
-  activeCamera(): string | undefined {
-    return this.curcamerasDevice?.cameraId;
-  }
-
+  // 获取预览配置
   getPreviewProfilesObj(): camera.Profile | undefined {
     if (!this.cameraManager || !this.curcamerasDevice) {
       return undefined;
     }
     try {
+      // 查询相机设备在指定模式下支持的输出能力，同步返回结果
       const profiles = this.cameraManager.getSupportedOutputCapability(
         this.curcamerasDevice,
         camera.SceneMode.NORMAL_PHOTO,
       );
+      // 支持的预览配置信息集合
       const previewProfiles = profiles.previewProfiles;
       if (!previewProfiles || previewProfiles.length === 0) {
         Log.e(TAG, 'getPreviewProfilesObj no preview profiles');
         return undefined;
       }
-
+      // TODO: 优先选择 1920x1080 的预览分辨率，兼容性较好且性能可控。实际使用中会根据设备支持情况进行回退选择。
       const preferred = previewProfiles.find((profile: camera.Profile) => {
+        Log.i(TAG, `getPreviewProfilesObj supported profile: ${profile.size.width}x${profile.size.height}`);
         return profile.size.width === 1920 && profile.size.height === 1080;
       });
       if (preferred) {
@@ -244,6 +239,7 @@ export class CameraService {
     }
 
     try {
+      // 获取指定的相机设备对象支持的模式
       const sceneModes = this.cameraManager.getSupportedSceneModes(this.curcamerasDevice);
       const supportPhoto = sceneModes.indexOf(camera.SceneMode.NORMAL_PHOTO) >= 0;
       if (!supportPhoto) {
@@ -261,20 +257,30 @@ export class CameraService {
         `initCamera using profile=${previewProfile.size.width}x${previewProfile.size.height}, cameraId=${this.curcamerasDevice.cameraId}`,
       );
 
+      // 创建一个预览输出对象，输出到 XComponentSurfaceId 以显示预览画面
       this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, XComponentSurfaceId);
+      // 用于获取一个surface id供Camera或其他组件使用
       const imageSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
+      // 创建第二个预览输出对象，输出到 imageReceiver 以获取预览帧进行扫码解码
       const previewOutput2 = this.cameraManager.createPreviewOutput(previewProfile, imageSurfaceId);
-
+      // 使用CameraDevice对象创建CameraInput实例
       this.cameraInput = this.cameraManager.createCameraInput(this.curcamerasDevice);
+      // 打开相机
       await this.cameraInput.open();
 
       this.photoSession = this.cameraManager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.PhotoSession;
+      // 开始配置会话
       this.photoSession.beginConfig();
+      // 把CameraInput加入到会话
       this.photoSession.addInput(this.cameraInput);
+      // 把PreviewOutput加入到会话
       this.photoSession.addOutput(this.previewOutput);
       this.photoSession.addOutput(previewOutput2);
+      // 提交配置信息
       await this.photoSession.commitConfig();
+      // 开始会话工作
       await this.photoSession.start();
+      // 设置连续自动对焦模式
       this.setFocusMode(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO);
       this.isStop = false;
       return true;
@@ -289,6 +295,7 @@ export class CameraService {
       return;
     }
     try {
+      // 检测对焦模式是否支持
       const supported = this.photoSession.isFocusModeSupported(focusMode);
       if (supported) {
         this.photoSession.setFocusMode(focusMode);
@@ -303,6 +310,7 @@ export class CameraService {
       return false;
     }
     try {
+      // 获取当前设备的闪光灯模式
       const flashMode = this.photoSession.getFlashMode();
       return flashMode === camera.FlashMode.FLASH_MODE_ALWAYS_OPEN;
     } catch (error) {
@@ -336,6 +344,7 @@ export class CameraService {
 
   hasFlash(): boolean {
     try {
+      // 检测是否有闪光灯，返回是否支持闪光灯
       return this.photoSession?.hasFlash() ?? false;
     } catch (error) {
       const err = error as BusinessError;
@@ -346,6 +355,7 @@ export class CameraService {
 
   isFlashModeSupported(mode: camera.FlashMode): boolean {
     try {
+      // 检测闪光灯模式是否支持
       return this.photoSession?.isFlashModeSupported(mode) ?? false;
     } catch (error) {
       const err = error as BusinessError;
@@ -359,6 +369,7 @@ export class CameraService {
       return [];
     }
     try {
+      // 获取支持的变焦范围
       const range = this.photoSession.getZoomRatioRange();
       if (!range || range.length < 2) {
         return [];
@@ -395,6 +406,7 @@ export class CameraService {
     const ratioRounded = Math.round(ratio * 100) / 100;
 
     try {
+      // 设置变焦比，变焦精度最高为小数点后两位
       this.photoSession.setZoomRatio(ratioRounded);
       Log.i(
         TAG,
@@ -411,6 +423,7 @@ export class CameraService {
 
   async stopCamera(): Promise<void> {
     try {
+      // 停止会话工作，通过注册回调函数获取结果
       await this.photoSession?.stop();
       this.isStop = true;
     } catch (error) {
@@ -425,6 +438,7 @@ export class CameraService {
         await this.photoSession?.stop();
         this.isStop = true;
       }
+      // 释放会话资源，通过注册回调函数获取结果
       await this.photoSession?.release();
       await this.cameraInput?.close();
       await this.photoOutput?.release();
@@ -450,16 +464,19 @@ export class CameraService {
     }
   }
 
+  // 注册预览帧到达的回调函数，在回调中读取预览帧图像并进行扫码解码
   onImageArrival(scanCallback: (result: scanBarcode.ScanResult) => void): void {
     this.imageReceiver.on('imageArrival', () => {
       if (this.isStop) {
         return;
       }
+      // 从ImageReceiver读取下一张图片
       this.imageReceiver.readNextImage((err: BusinessError, nextImage: image.Image) => {
         if (err || nextImage === undefined) {
           Log.e(TAG, 'onImageArrival readNextImage failed');
           return;
         }
+        // 根据图像的组件类型从图像中获取组件缓存
         nextImage.getComponent(image.ComponentType.JPEG, (compErr: BusinessError, imgComponent: image.Component) => {
           if (compErr || imgComponent === undefined) {
             Log.e(TAG, 'onImageArrival getComponent(JPEG) failed: ' + JSON.stringify(compErr));
@@ -467,6 +484,7 @@ export class CameraService {
             return;
           }
           if (imgComponent.byteBuffer as ArrayBuffer) {
+            // 对图片进行解码
             this.decodeImageBuffer(imgComponent, nextImage.size.width, nextImage.size.height, scanCallback);
           } else {
             Log.w(TAG, 'onImageArrival component has empty byteBuffer');
@@ -490,6 +508,7 @@ export class CameraService {
     this.lastDecodeAtMs = now;
     this.decodeAttemptCount += 1;
 
+    // 构造扫码解码需要的 ByteImage 对象，包含图像数据的字节缓冲区、图像宽高和格式等信息
     const byteImg: detectBarcode.ByteImage = {
       byteBuffer: imgComponent.byteBuffer,
       width: width,
