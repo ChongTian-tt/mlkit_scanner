@@ -27,7 +27,7 @@ import { camera } from '@kit.CameraKit';
 import { scanBarcode } from '@kit.ScanKit';
 import { Params } from '@ohos/flutter_ohos/src/main/ets/plugin/platform/PlatformView';
 import { CameraPreviewComponent, getCurrentCameraPreviewComponent } from './CameraPreviewComponent';
-import { CameraService } from './camera/CameraService';
+import { CameraService } from './CameraService';
 import { MLKitScannerOptions } from './MLKitScannerOptions';
 import {
   CropRect,
