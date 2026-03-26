@@ -23,10 +23,27 @@ class _MyAppState extends State<MyApp> {
   BarcodeScannerController? _controller;
 
   List<IosCamera> _iosCameras = [];
+  List<OhosCamera> _ohosCameras = [];
 
   var _cameraIndex = -1;
   var _cameraType = '';
   var _cameraPosition = '';
+
+  bool get _isIos => defaultTargetPlatform == TargetPlatform.iOS;
+
+  bool get _isOhos => defaultTargetPlatform == TargetPlatform.ohos;
+
+  bool get _supportsCameraSwitch => _isIos || _isOhos;
+
+  int get _cameraCount {
+    if (_isIos) {
+      return _iosCameras.length;
+    }
+    if (_isOhos) {
+      return _ohosCameras.length;
+    }
+    return 0;
+  }
   
   // 扫描区域设置选项
   final _cropAreaOptions = [
@@ -37,53 +54,91 @@ class _MyAppState extends State<MyApp> {
   ];
   var _currentCropAreaIndex = 0;
 
-  void _setNextIosCamera() {
-    if (_iosCameras.isEmpty) {
+  void _setNextCamera() {
+    if (_cameraCount == 0) {
       return;
     }
-    _cameraIndex = (_cameraIndex + 1) % _iosCameras.length;
-    _controller!.setIosCamera(position: _iosCameras[_cameraIndex].position, type: _iosCameras[_cameraIndex].type);
+    _cameraIndex = (_cameraIndex + 1) % _cameraCount;
+    _applySelectedCamera();
     _resetZoom();
-    setState(() {
-      _cameraType = _iosCameras[_cameraIndex].type.name;
-      _cameraPosition = _iosCameras[_cameraIndex].position.name;
-    });
   }
 
   void _setNextRearCameraType() {
-    if (_iosCameras.isEmpty) {
+    if (_cameraCount == 0) {
       return;
     }
+    // 只收集“后置”相机索引，用于在同一朝向下切换不同镜头类型。
     final rearIndexes = <int>[];
-    for (var i = 0; i < _iosCameras.length; i++) {
-      if (_iosCameras[i].position == IosCameraPosition.back) {
-        rearIndexes.add(i);
+    if (_isIos) {
+      for (var i = 0; i < _iosCameras.length; i++) {
+        if (_iosCameras[i].position == IosCameraPosition.back) {
+          rearIndexes.add(i);
+        }
+      }
+    } else if (_isOhos) {
+      for (var i = 0; i < _ohosCameras.length; i++) {
+        if (_ohosCameras[i].position == OhosCameraPosition.back) {
+          rearIndexes.add(i);
+        }
       }
     }
     if (rearIndexes.isEmpty) {
       return;
     }
+    // 轮换规则：如果当前就在后置列表里，则切下一个；否则从第一个后置镜头开始。
     final currentRearPos = rearIndexes.indexOf(_cameraIndex);
     final nextRearPos = currentRearPos >= 0
         ? (currentRearPos + 1) % rearIndexes.length
         : 0;
     _cameraIndex = rearIndexes[nextRearPos];
-    _controller!.setIosCamera(position: _iosCameras[_cameraIndex].position, type: _iosCameras[_cameraIndex].type);
+    _applySelectedCamera();
     _resetZoom();
-    setState(() {
-      _cameraType = _iosCameras[_cameraIndex].type.name;
-      _cameraPosition = _iosCameras[_cameraIndex].position.name;
-    });
+  }
+
+  void _applySelectedCamera() {
+    if (_controller == null || _cameraIndex < 0) {
+      return;
+    }
+
+    // 按平台调用不同的设置接口，但都复用同一套 UI 索引与展示。
+    if (_isIos && _cameraIndex < _iosCameras.length) {
+      final camera = _iosCameras[_cameraIndex];
+      _controller!.setIosCamera(position: camera.position, type: camera.type);
+      setState(() {
+        _cameraType = camera.type.name;
+        _cameraPosition = camera.position.name;
+      });
+      return;
+    }
+
+    if (_isOhos && _cameraIndex < _ohosCameras.length) {
+      final camera = _ohosCameras[_cameraIndex];
+      _controller!.setOhosCamera(position: camera.position, type: camera.type);
+      setState(() {
+        _cameraType = camera.type.name;
+        _cameraPosition = camera.position.name;
+      });
+    }
   }
 
   String _getCameraListDescription() {
-    if (_iosCameras.isEmpty) {
+    if (_cameraCount == 0) {
       return 'no cameras';
     }
-    return _iosCameras
+    if (_isIos) {
+      return _iosCameras
+          .asMap()
+          .entries
+          .map((entry) =>
+              '${entry.key}:${entry.value.position.name}/${entry.value.type.name}')
+          .join(' | ');
+    }
+
+    return _ohosCameras
         .asMap()
         .entries
-        .map((entry) => '${entry.key}:${entry.value.position.name}/${entry.value.type.name}')
+        .map((entry) =>
+            '${entry.key}:${entry.value.position.name}/${entry.value.type.name}')
         .join(' | ');
   }
 
@@ -138,10 +193,14 @@ class _MyAppState extends State<MyApp> {
                     },
                     onScannerInitialized: (controller) async {
                       _controller = controller;
-                      if (defaultTargetPlatform == TargetPlatform.iOS || 
-                      defaultTargetPlatform == TargetPlatform.ohos) {
+                      // 初始化后按平台拉取相机列表，并立即应用第一个可用镜头。
+                      if (_isIos) {
                         _iosCameras = await MLKitUtils().getIosAvailableCameras();
-                        _setNextIosCamera();
+                        _setNextCamera();
+                      } else if (_isOhos) {
+                        _ohosCameras =
+                            await MLKitUtils().getOhosAvailableCameras();
+                        _setNextCamera();
                       }
                     },
                   ),
@@ -256,8 +315,7 @@ class _MyAppState extends State<MyApp> {
               ),
               onPressed: _setNextCropArea,
             ),
-            if (defaultTargetPlatform == TargetPlatform.iOS ||
-             defaultTargetPlatform == TargetPlatform.ohos)
+            if (_supportsCameraSwitch)
               Column(
                 children: [
                   TextButton(
@@ -265,13 +323,14 @@ class _MyAppState extends State<MyApp> {
                       '$_cameraIndex: $_cameraPosition, $_cameraType',
                       textAlign: TextAlign.center,
                     ),
-                    onPressed: _setNextIosCamera,
+                    onPressed: _setNextCamera,
                   ),
                   TextButton(
                     child: const Text(
                       'Next rear camera type',
                       textAlign: TextAlign.center,
                     ),
+                    // 在“后置镜头类型”内轮换，不切到前置镜头。
                     onPressed: _setNextRearCameraType,
                   ),
                   Padding(

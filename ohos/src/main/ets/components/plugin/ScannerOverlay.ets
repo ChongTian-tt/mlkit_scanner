@@ -53,7 +53,12 @@ export struct ScannerOverlay {
     const radius = cornerLen / 2;
 
     // 全屏矩形
-    path.addRect({ left: 0, top: 0, right: w, bottom: h });
+    path.addRect({
+      left: 0,
+      top: 0,
+      right: w,
+      bottom: h
+    });
 
     // 裁剪区域的圆角矩形孔（半径/2与圆角弧度相匹配）
     const hole = new drawing.Path();
@@ -118,11 +123,21 @@ export struct ScannerOverlay {
     const w = canvas.getWidth();
     const h = canvas.getHeight();
 
-    canvas.clear({ alpha: 0, red: 0, green: 0, blue: 0 });
+    canvas.clear({
+      alpha: 0,
+      red: 0,
+      green: 0,
+      blue: 0
+    });
 
     // 1. 绘制半透明背景遮罩
     const bgBrush = new drawing.Brush();
-    const blackColor: common2D.Color = { alpha: 120, red: 0, green: 0, blue: 0 };
+    const blackColor: common2D.Color = {
+      alpha: 120,
+      red: 0,
+      green: 0,
+      blue: 0
+    };
     bgBrush.setColor(blackColor);
     canvas.attachBrush(bgBrush);
     canvas.drawPath(this.buildMaskPath(w, h));
@@ -135,8 +150,18 @@ export struct ScannerOverlay {
       pen.setAntiAlias(true);
       pen.setCapStyle(drawing.CapStyle.ROUND_CAP);
       const borderColor: common2D.Color = this.isActive
-        ? { alpha: 255, red: 0x43, green: 0xA0, blue: 0x47 }   // #43A047 green
-        : { alpha: 255, red: 0x61, green: 0x61, blue: 0x61 };   // #616161 grey
+        ? {
+          alpha: 255,
+          red: 0x43,
+          green: 0xA0,
+          blue: 0x47
+        }   // #43A047 green
+        : {
+          alpha: 255,
+          red: 0x61,
+          green: 0x61,
+          blue: 0x61
+        }; // #616161 grey
       pen.setColor(borderColor);
       canvas.attachPen(pen);
       canvas.drawPath(this.buildCornerPath(w, h));

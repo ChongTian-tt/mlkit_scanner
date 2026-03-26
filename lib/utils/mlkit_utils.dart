@@ -1,4 +1,5 @@
 import 'package:mlkit_scanner/models/ios_camera.dart';
+import 'package:mlkit_scanner/models/ohos_camera.dart';
 import 'package:mlkit_scanner/platform/ml_kit_channel.dart';
 
 /// Contains useful methods that can be accessed regardless of the state of the camera.
@@ -10,4 +11,8 @@ class MLKitUtils {
   /// Gets all available iOS cameras.
   Future<List<IosCamera>> getIosAvailableCameras() =>
       _mLKitChannel.getIosAvailableCameras();
+
+    /// Gets all available OHOS cameras.
+    Future<List<OhosCamera>> getOhosAvailableCameras() =>
+      _mLKitChannel.getOhosAvailableCameras();
 }

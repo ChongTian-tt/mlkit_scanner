@@ -19,12 +19,11 @@ import {
   PlatformViewFactory,
   AbilityPluginBinding,
   Log,
-
 } from '@ohos/flutter_ohos';
 import { CameraPreviewFactory } from './CameraPreviewFactory';
 import { PluginConstants } from './PluginConstants';
 
-const TAG: string = 'MlkitScannerPlugin';
+const TAG: string = '[MlkitScannerPlugin:]';
 
 /** MlkitScannerPlugin **/
 export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {

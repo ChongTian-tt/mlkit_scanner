@@ -36,23 +36,11 @@ import {
   PluginConstants,
   PluginError,
   PreviewState,
-  DecodeState
+  OhosCameraItem,
+  ScanRectLike
 } from './PluginConstants';
 
-const TAG: string = 'MlkitScannerPlugin_FlutterMLKitScannerView';
-
-interface OhosCameraItem {
-  cameraId: string;
-  position: number;
-  type: number;
-}
-
-interface ScanRectLike {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
+const TAG: string = '[MLKitScannerView:]';
 
 let flutterMLKitScannerView: MLKitScannerView;
 
@@ -66,9 +54,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   public isCameraInitialized: boolean = false;
   public userGrant: boolean = false;
   public flashLightStatus: boolean = false;
-  private flashLightStatusBeforePause: boolean = false;
+  public flashLightStatusBeforePause: boolean = false;
   public isScan: boolean = false;
-  public isProcessingResult: boolean = false;
   // 预览的分辨率，扫描器会基于这个分辨率来配置相机和处理图像数据（已按 ScanKit 支持宽高比适配）
   private previewSize: Size = { width: 0, height: 0 };
   // 容器原始尺寸（Flutter 约束 / onAreaChange 原生 vp），用于居中预览
@@ -84,14 +71,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private previewState: PreviewState = {
     isRunning: false, // 预览流是否开启
     isPausedByUser: false, // 是否是用户暂停
-  };
-  private decodeState: DecodeState = {
-    inFlight: false,
-    lastAttemptAtMs: 0,
-    scanSessionStartedAtMs: 0,
-    lastEmittedRawValue: '',
-    lastEmittedAtMs: 0,
-    lastDecodedRawValue: '',
   };
   private desiredZoom: number | null = null;
   private lastHostLayoutW: number = 0;
@@ -123,7 +102,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return null;
     }
     const ohosContext = this.context as ESObject as Context;
-    return new CameraService(ohosContext);
+    return new CameraService(
+      ohosContext,
+      () => this.flashLightStatusBeforePause,
+      (status: boolean) => {
+        this.flashLightStatusBeforePause = status;
+      },
+    );
   }
 
   private getCameraService(): CameraService | null {
@@ -150,7 +135,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       const right = Number(rect['right']);
       const bottom = Number(rect['bottom']);
       if ([left, top, right, bottom].every((n) => Number.isFinite(n))) {
-        return { left, top, right, bottom };
+        return {
+          left,
+          top,
+          right,
+          bottom
+        } as ScanRectLike;
       }
     }
     return null;
@@ -163,7 +153,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     const top = Math.round(h * 0.35);
     const right = Math.round(w * 0.65);
     const bottom = Math.round(h * 0.65);
-    return { left, top, right, bottom };
+    return {
+      left,
+      top,
+      right,
+      bottom
+    } as ScanRectLike;
   }
 
   private onFrameResult(result: scanBarcode.ScanResult): void {
@@ -174,7 +169,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
 
-    Log.i(TAG, `onFrameResult hit, value=${result.originalValue}`);
     this.originalValue = result.originalValue;
     const resultMap = result as ESObject as Record<string, Object>;
     const frameHeight = Number(resultMap['frameHeight']);
@@ -201,22 +195,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     });
 
     if (matchedByRawRect || matchedByConvertedRect || matchedByFallback) {
-      if (rectLikeRaw && !matchedByRawRect && matchedByConvertedRect) {
-        Log.i(TAG, `onFrameResult matched after yuv conversion, value=${this.originalValue}`);
-      }
-      Log.i(TAG, `onFrameResult in crop rect, emit value=${this.originalValue}`);
       this.emitScanResult(this.originalValue);
       this.originalValue = '';
       this.startScanDelayWindow();
-      return;
     }
-
-    Log.w(
-      TAG,
-      `onFrameResult filtered by crop: value=${this.originalValue}, ` +
-      `rawMatch=${matchedByRawRect}, convertedMatch=${matchedByConvertedRect}, ` +
-      `fallbackMatch=${matchedByFallback}`,
-    );
   }
 
   private bindFrameListener(): void {
@@ -235,44 +217,44 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   async onMethodCall(call: MethodCall, result: MethodResult): Promise<void> {
     switch (call.method) {
-      case 'initCameraPreview':
+      case PluginConstants.initCameraMethod:
         this.initCameraPreview(call, result);
         break;
-      case 'dispose':
+      case PluginConstants.disposeCameraMethod:
         await this.disposeHandle(result);
         break;
-      case 'toggleFlash':
+      case PluginConstants.toggleFlashMethod:
         this.toggleFlash(result);
         break;
-      case 'startScan':
+      case PluginConstants.startScanMethod:
         await this.startScan(call, result);
         break;
-      case 'cancelScan':
+      case PluginConstants.cancelScanMethod:
         this.cancelScan(result);
         break;
-      case 'setScanDelay':
+      case PluginConstants.setScanDelayMethod:
         this.setScanDelay(call, result);
         break;
-      case 'updateConstraints':
+      case PluginConstants.updateConstraintsMethod:
         this.updateConstraints(call, result);
         break;
-      case 'pauseCameraMethod':
+      case PluginConstants.pauseCameraMethod:
         this.pauseCamera(result);
         break;
-      case 'resumeCameraMethod':
+      case PluginConstants.resumeCameraMethod:
         this.resumeCamera(result);
         break;
-      case 'setZoom':
+      case PluginConstants.setZoomMethod:
         this.setZoom(call, result);
         break;
-      case 'setCropAreaMethod':
+      case PluginConstants.setCropAreaMethod:
         this.setCropArea(call, result);
         break;
-      case PluginConstants.getIosAvailableCamerasMethod:
-        this.getIosAvailableCameras(result);
+      case PluginConstants.getOhosAvailableCamerasMethod:
+        this.getOhosAvailableCameras(result);
         break;
-      case PluginConstants.setIosCameraMethod:
-        this.setIosCamera(call, result);
+      case PluginConstants.setOhosCameraMethod:
+        this.setOhosCamera(call, result);
         break;
       default:
         result.notImplemented();
@@ -340,6 +322,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   setSurfaceId(surfaceId: string) {
     this.surfaceId = surfaceId;
+    // 异步触发不等待
     void this.startPreview();
   }
 
@@ -350,15 +333,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       this.bindFrameListener();
       void this.startPreview();
     }
-  }
-
-  private resetDecodeState(): void {
-    this.decodeState.inFlight = false;
-    this.decodeState.lastAttemptAtMs = 0;
-    this.decodeState.scanSessionStartedAtMs = 0;
-    this.decodeState.lastEmittedRawValue = '';
-    this.decodeState.lastEmittedAtMs = 0;
-    this.decodeState.lastDecodedRawValue = '';
   }
 
   // 开启扫描
@@ -499,12 +473,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return this.initialScannerParameters?.initialCropRect ?? null;
   }
 
-  private handleScanCallback(data: scanBarcode.ScanResult[]): void {
-    void data;
-    // CameraService 解码链路不需要 rescan 控制。
-  }
-
   private emitScanResult(result: string): void {
+    // 将扫码解析后的结果回传flutter
     this.channel?.invokeMethod(PluginConstants.scanResultMethod, {
       raw_value: result,
       display_value: result,
@@ -523,10 +493,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
     if (this.previewState.isRunning || this.isPreviewStarting) {
-      Log.i(
-        TAG,
-        `startPreview skipped: running=${this.previewState.isRunning}, starting=${this.isPreviewStarting}`,
-      );
       return;
     }
     this.isPreviewStarting = true;
@@ -653,7 +619,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       const service = this.getCameraService();
       if (service) {
         this.selectedCameraId =
-          service.findCameraIdByIosCodes(this.selectedCameraPositionCode, this.selectedCameraTypeCode) ?? '';
+          service.findCameraIdByOhosCodes(this.selectedCameraPositionCode, this.selectedCameraTypeCode) ?? '';
       }
     }
 
@@ -712,7 +678,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.isCameraInitialized = false;
     this.endScanSession();
     this.endPreviewSession();
-    this.resetDecodeState();
     this.desiredZoom = null;
     this.flashLightStatusBeforePause = false;
     this.previewState.isPausedByUser = false;
@@ -766,8 +731,14 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         result.success(true);
       }
       this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
+      // 将手电筒状态回传flutter
+      this.channel?.invokeMethod(
+        PluginConstants.changeTorchStateMethod,
+        this.flashLightStatusBeforePause
+      );
     } catch (error) {
       Log.e(TAG, `Failed to getFlashLightStatus. Code: ${error.code}, message: ${error.message}`);
+      result.error('toggleFlash ', `Failed to toggleFlash. ${error.code}, message: ${error.message}`, null);
     }
   }
 
@@ -786,7 +757,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
     this.scanDelayMs = options.periodMs;
-    this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
+    if (!this.previewState.isPausedByUser) {
+      this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
+    }
     if (!this.isCameraInitialized) {
       if (this.previewState.isPausedByUser) {
         getCurrentCameraPreviewComponent()?.setScanActive(true);
@@ -897,10 +870,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       result.success(true);
       return;
     }
-    this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
-    if (this.flashLightStatusBeforePause) {
+    const isFlashOn = this.getFlashLightStatusSafely();
+    if (isFlashOn) {
       this.closeFlashLightSafely();
     }
+    // 强制恢复，因为上面的 closeFlashLightSafely 会触发回调将本类的状态设为了 false
+    this.flashLightStatusBeforePause = isFlashOn;
     this.previewState.isPausedByUser = true;
     this.originalValue = '';
     this.clearScanDelayTimer();
@@ -933,6 +908,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     let flashLightStatus: boolean = this.flashLightStatus;
     try {
       const service = this.getCameraService();
+      // 这里获取闪光灯状态时，有一个问题：进入应用，打开闪光灯，点击pause,应用切后台，再切前台，再点击startScan，此时这个接口报错，因为 ScanKit 在 pause 时会释放预览流，导致无法获取闪光灯状态。这里捕获异常，避免应用崩溃，并且在异常情况下返回上一次已知的闪光灯状态。
       flashLightStatus = service?.getFlashStatus() ?? this.flashLightStatus;
     } catch (error) {
       Log.e(TAG, `Failed to getFlashLightStatus. Code: ${error.code}, message: ${error.message}`);
@@ -987,8 +963,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     // 非用户触发pause后前后台切换
     if (!this.previewState.isPausedByUser) {
       try {
-        const service = this.getCameraService();
-        await service?.preFrontRelease(false);
+        // const service = this.getCameraService();
+        // await service?.preFrontRelease(false);
         this.originalValue = '';
         await this.startPreview();
         this.applyDesiredZoomIfPossible();
@@ -1090,7 +1066,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     result.success(true);
   }
 
-  private getIosAvailableCameras(result: MethodResult): void {
+  private getOhosAvailableCameras(result: MethodResult): void {
     if (!this.context) {
       result.error(PluginError.InitCameraError, 'context is undefined!', null);
       return;
@@ -1118,11 +1094,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  private setIosCamera(call: MethodCall, result: MethodResult): void {
+  private setOhosCamera(call: MethodCall, result: MethodResult): void {
     const args = this.normalizeArgs(call.args as ESObject);
     const position = Number(args['position']);
     const type = Number(args['type']);
-    Log.i(TAG, `setIosCamera called with position=${position}, type=${type}`);
     if (!Number.isFinite(position) || !Number.isFinite(type)) {
       result.error(PluginError.InvalidArguments, 'Invalid camera arguments, position/type required', null);
       return;
@@ -1142,7 +1117,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         return;
       }
 
-      const cameraId = service.findCameraIdByIosCodes(reqPosition, reqType);
+      const cameraId = service.findCameraIdByOhosCodes(reqPosition, reqType);
       if (!cameraId) {
         result.error(
           PluginError.InvalidArguments,
@@ -1165,16 +1140,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       void this.restartPreviewAfterLayoutChange();
     }
 
-    // 日志字段说明：
-    // cameraId: 实际切换到的 CameraKit 设备 ID；
-    // position: 兼容 iOS 的镜头朝向编码（1=后置, 2=前置）；
-    // type: 兼容 iOS 的镜头类型编码（0=广角, 1=长焦, 3=超广角...）。
-    Log.i(
-      TAG,
-      'setIosCamera applied. ' +
-      `cameraId=${this.selectedCameraId}, ` +
-      `position=${this.selectedCameraPositionCode}, type=${this.selectedCameraTypeCode}`,
-    );
     result.success(true);
   }
 

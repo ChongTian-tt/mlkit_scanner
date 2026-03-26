@@ -29,10 +29,11 @@ export class PluginConstants {
   static readonly cancelScanMethod: string = 'cancelScan';
   static readonly setScanDelayMethod: string = 'setScanDelay';
   static readonly scanResultMethod: string = 'onScanResult';
+  static readonly changeTorchStateMethod: string = 'changeTorchStateMethod';
   static readonly setZoomMethod: string = 'setZoom';
   static readonly setCropAreaMethod: string = 'setCropAreaMethod';
-  static readonly getIosAvailableCamerasMethod: string = 'getIosAvailableCameras';
-  static readonly setIosCameraMethod: string = 'setIosCamera';
+  static readonly getOhosAvailableCamerasMethod: string = 'getIosAvailableCameras';
+  static readonly setOhosCameraMethod: string = 'setIosCamera';
   static readonly SCAN_COMPONENT_WIDTH_100 = '100%';
 }
 
@@ -75,11 +76,15 @@ export interface Size {
   height: number;
 }
 
-export interface DecodeState {
-  inFlight: boolean;
-  lastAttemptAtMs: number;
-  scanSessionStartedAtMs: number;
-  lastEmittedRawValue: string;
-  lastEmittedAtMs: number;
-  lastDecodedRawValue: string;
+export interface OhosCameraItem {
+  cameraId: string;
+  position: number;
+  type: number;
+}
+
+export interface ScanRectLike {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 }

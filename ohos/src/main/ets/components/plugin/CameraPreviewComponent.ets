@@ -21,7 +21,7 @@ import { ScannerOverlay } from './ScannerOverlay';
 import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
 import { CropRect, PluginConstants, PluginError, Size } from './PluginConstants';
 
-const TAG: string = 'MlkitScannerPlugin_CameraPreviewComponent';
+const TAG: string = '[CameraPreviewComponent:]';
 
 let currentCameraPreview: CameraPreviewComponent | null = null;
 

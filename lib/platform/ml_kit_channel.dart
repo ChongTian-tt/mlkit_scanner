@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:mlkit_scanner/mlkit_scanner.dart';
+import 'package:mlkit_scanner/models/ohos_camera.dart';
+import 'package:mlkit_scanner/models/ohos_camera_position.dart';
+import 'package:mlkit_scanner/models/ohos_camera_type.dart';
 import 'package:mlkit_scanner/models/recognition_type.dart';
 
 /// Platform channel of the MLkit plugin
@@ -151,6 +154,26 @@ class MlKitChannel {
   Future<void> setIosCamera({
     required IosCameraPosition position,
     required IosCameraType type,
+  }) {
+    return _channel.invokeMethod(_setIosCamera, {
+      'position': position.code,
+      'type': type.code,
+    });
+  }
+
+  /// Gets all available OHOS cameras.
+  Future<List<OhosCamera>> getOhosAvailableCameras() async {
+    final availableCameras =
+        (await _channel.invokeListMethod<dynamic>(_getIosAvailableCameras))!;
+    return availableCameras
+        .map((json) => OhosCamera.fromJson(Map<String, dynamic>.from(json)))
+        .toList();
+  }
+
+  /// Sets OHOS camera with [position] and [type].
+  Future<void> setOhosCamera({
+    required OhosCameraPosition position,
+    required OhosCameraType type,
   }) {
     return _channel.invokeMethod(_setIosCamera, {
       'position': position.code,

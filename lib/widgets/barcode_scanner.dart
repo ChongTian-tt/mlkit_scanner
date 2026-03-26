@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:mlkit_scanner/mlkit_scanner.dart';
+import 'package:mlkit_scanner/models/ohos_camera_position.dart';
+import 'package:mlkit_scanner/models/ohos_camera_type.dart';
 import 'package:mlkit_scanner/models/recognition_type.dart';
 import 'package:mlkit_scanner/platform/ml_kit_channel.dart';
 import 'package:mlkit_scanner/widgets/camera_preview.dart';
@@ -143,6 +145,13 @@ class _BarcodeScannerState extends State<BarcodeScanner> {
   }) {
     return _channel.setIosCamera(position: position, type: type);
   }
+
+  Future<void> _setOhosCamera({
+    required OhosCameraPosition position,
+    required OhosCameraType type,
+  }) {
+    return _channel.setOhosCamera(position: position, type: type);
+  }
 }
 
 /// Controller for control camera and detection. Return by widget [BarcodeScanner] when scanner is initialized.
@@ -227,6 +236,17 @@ class BarcodeScannerController {
     required IosCameraType type,
   }) async {
     return await _barcodeScannerState?._setIosCamera(
+      position: position,
+      type: type,
+    );
+  }
+
+  /// Sets OHOS camera with [position] and [type].
+  Future<void> setOhosCamera({
+    required OhosCameraPosition position,
+    required OhosCameraType type,
+  }) async {
+    return await _barcodeScannerState?._setOhosCamera(
       position: position,
       type: type,
     );
