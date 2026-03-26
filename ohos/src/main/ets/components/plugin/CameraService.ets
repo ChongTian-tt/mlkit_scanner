@@ -259,6 +259,70 @@ export class CameraService {
     }
   }
 
+  private clamp01(value: number): number {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
+  }
+
+  /**
+   * 将预览坐标转换到 Focus.setFocusPoint 所需坐标系。
+   *
+   * HarmonyOS 对焦点坐标系定义：以“充电口在右侧”的横屏方向为基准。
+   * 本插件预览默认按竖屏展示，因此使用官方建议转换：{x, y} -> {y/h, 1-x/w}。
+   */
+  private toFocusPointFromPreview(x: number, y: number, width: number, height: number): camera.Point {
+    const nx = this.clamp01(y / height);
+    const ny = this.clamp01(1 - x / width);
+    return {
+      x: nx,
+      y: ny,
+    } as camera.Point;
+  }
+
+  /**
+   * 轻触/长按触发对焦。
+   * needLock=true：切到自动对焦模式，模拟“锁定当前对焦点”。
+   * needLock=false：切回连续自动对焦。
+   */
+  focusAtPreviewPoint(
+    x: number,
+    y: number,
+    previewWidth: number,
+    previewHeight: number,
+    needLock: boolean,
+  ): boolean {
+    if (!this.photoSession || previewWidth <= 0 || previewHeight <= 0) {
+      return false;
+    }
+
+    try {
+      const focusPoint = this.toFocusPointFromPreview(x, y, previewWidth, previewHeight);
+      this.photoSession.setFocusPoint(focusPoint);
+
+      const targetMode = needLock
+        // 对焦锁定 
+        ? camera.FocusMode.FOCUS_MODE_LOCKED
+        // 连续自动对焦
+        : camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO;
+      if (this.photoSession.isFocusModeSupported(targetMode)) {
+        this.photoSession.setFocusMode(targetMode);
+        Log.w(TAG, `setFocusMode ${JSON.stringify(targetMode)}`);
+      }
+      return true;
+    } catch (error) {
+      Log.e(TAG, 'focusAtPreviewPoint failed: ' + JSON.stringify(error));
+      return false;
+    }
+  }
+
   getFlashStatus(): boolean {
     if (!this.photoSession) {
       return this.getSharedFlashStatus();
@@ -475,9 +539,9 @@ export class CameraService {
 
     detectBarcode.decodeImage(byteImg, options).then((detectResult: detectBarcode.DetectResult) => {
       if (detectResult.scanResults.length > 0) {
-        const res = detectResult.scanResults[0];
+        const res: scanBarcode.ScanResult = detectResult.scanResults[0];
         if (res && res.originalValue) {
-          const resultMap = res as ESObject as Record<string, Object>;
+          const resultMap = res;
           resultMap['frameHeight'] = height;
           scanCallback(res);
         }

@@ -88,3 +88,13 @@ export interface ScanRectLike {
   right: number;
   bottom: number;
 }
+
+export interface TouchPoint {
+  x: number;
+  y: number;
+}
+
+export interface TouchRecord {
+  x?: Object;
+  y?: Object;
+}

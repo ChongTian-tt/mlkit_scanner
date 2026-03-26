@@ -174,7 +174,8 @@ export struct ScannerOverlay {
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
-      .hitTestBehavior(HitTestMode.Block)
+      // 遮罩只负责绘制，不拦截触摸，事件透传给下层相机预览组件
+      .hitTestBehavior(HitTestMode.Transparent)
       .onReady(() => {
         this.isCanvasReady = true;
         this.onDraw();

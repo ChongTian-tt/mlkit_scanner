@@ -281,6 +281,33 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
+    * 处理用户对焦手势
+    * @param touchX 触点X坐标，相对于预览图像左上角
+    * @param touchY 触点Y坐标，相对于预览图像左上角
+    * @param previewWidth 预览图像宽度
+    * @param previewHeight 预览图像高度
+    * @param needLock 是否需要锁定焦点（长按时为 true，单击时为 false）
+    */
+  public handleUserFocusGesture(
+    touchX: number,
+    touchY: number,
+    previewWidth: number,
+    previewHeight: number,
+    needLock: boolean,
+  ): void {
+    if (!this.isCameraInitialized || this.previewState.isPausedByUser || !this.previewState.isRunning) {
+      return;
+    }
+
+    try {
+      const service = this.getCameraService();
+      service?.focusAtPreviewPoint(touchX, touchY, previewWidth, previewHeight, needLock);
+    } catch (error) {
+      Log.e(TAG, 'handleUserFocusGesture error: ' + JSON.stringify(error));
+    }
+  }
+
+  /**
    * 宿主区域变化（onAreaChange，单位 vp）：以原生布局为准，避免 Flutter 与 XComponent 尺寸不一致导致变形
    */
   public onPreviewHostAreaChange(vpWidth: number, vpHeight: number): void {

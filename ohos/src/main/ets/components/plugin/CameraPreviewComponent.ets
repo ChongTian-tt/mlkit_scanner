@@ -19,7 +19,7 @@ import { common, AbilityLifecycleCallback } from '@kit.AbilityKit';
 import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
 import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
-import { CropRect, PluginConstants, PluginError, Size } from './PluginConstants';
+import { CropRect, PluginConstants, PluginError, Size, TouchPoint, TouchRecord } from './PluginConstants';
 
 const TAG: string = '[CameraPreviewComponent:]';
 
@@ -31,6 +31,13 @@ export struct CameraPreviewComponent {
   private context = this.getUIContext().getHostContext() as common.UIAbilityContext;
   private isScanKitInitialized: boolean = false;
   private lifecycleId: number = -1;
+  private LONG_PRESS_THRESHOLD_MS: number = 500;
+  private TOUCH_TYPE_DOWN: number = 0;
+  private TOUCH_TYPE_UP: number = 1;
+  private TOUCH_TYPE_CANCEL: number = 3;
+  private touchDownAtMs: number = -1;
+  private touchDownX: number = 0;
+  private touchDownY: number = 0;
   @Prop flutterMLKitScannerView: MLKitScannerView | null = null;
   @State canRenderCamera: boolean = false;
   private hasPermission: boolean = false;
@@ -87,13 +94,75 @@ export struct CameraPreviewComponent {
     .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
     .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
     .clip(true)
-    .onAreaChange((oldValue: ESObject, newValue: ESObject) => {
+    .onTouch((event: TouchEvent) => {
+      this.handleFocusTouch(event);
+    })
+    .onAreaChange((oldValue: Area, newValue: Area) => {
       void oldValue;
       const dims: Size = readOnAreaChangeSize(newValue);
       if (dims.width > 0 && dims.height > 0) {
         getCurrentMLKitScannerView()?.onPreviewHostAreaChange(dims.width, dims.height);
       }
     })
+  }
+
+  private handleFocusTouch(eventObj: TouchEvent): void {
+    if (!this.flutterMLKitScannerView || this.cameraWidth <= 0 || this.cameraHeight <= 0) {
+      return;
+    }
+    const touchType = readTouchType(eventObj);
+    const rawPoint = readTouchPoint(eventObj);
+    const point = rawPoint ? this.toPreviewPoint(rawPoint) : null;
+
+    // DOWN 事件时记录触点位置和时间，UP 事件时根据持续时间判断是否为长按
+    if (touchType === this.TOUCH_TYPE_DOWN && point) {
+      this.touchDownAtMs = Date.now();
+      this.touchDownX = point.x;
+      this.touchDownY = point.y;
+      return;
+    }
+
+    // 仅在 UP 事件时处理对焦，长按超过阈值则锁定焦点
+    if (touchType === this.TOUCH_TYPE_UP) {
+      if (this.touchDownAtMs < 0) {
+        return;
+      }
+      const duration = Date.now() - this.touchDownAtMs;
+      const needLock = duration >= this.LONG_PRESS_THRESHOLD_MS;
+      const focusX = this.touchDownX;
+      const focusY = this.touchDownY;
+      this.touchDownAtMs = -1;
+      Log.w(TAG, `Focus touch at (${focusX}, ${focusY}), duration=${duration}ms, needLock=${needLock}`);
+      this.flutterMLKitScannerView.handleUserFocusGesture(
+        focusX,
+        focusY,
+        this.cameraWidth,
+        this.cameraHeight,
+        needLock,
+      );
+      return;
+    }
+
+    if (touchType === this.TOUCH_TYPE_CANCEL) {
+      this.touchDownAtMs = -1;
+    }
+  }
+
+  // 将触点坐标转换为预览坐标（考虑 offset 和边界）
+  private toPreviewPoint(point: TouchPoint): TouchPoint | null {
+    const px = point.x - this.offsetX;
+    const py = point.y - this.offsetY;
+    if (!Number.isFinite(px) || !Number.isFinite(py)) {
+      return null;
+    }
+
+    const clampedX = Math.max(0, Math.min(this.cameraWidth, px));
+    const clampedY = Math.max(0, Math.min(this.cameraHeight, py));
+    const previewPoint: TouchPoint = {
+      x: clampedX,
+      y: clampedY,
+    };
+    return previewPoint;
   }
 
   getSurfaceId(): string {
@@ -166,7 +235,7 @@ export struct CameraPreviewComponent {
           await getCurrentMLKitScannerView()?.onHostBackground();
         },
       };
-      this.lifecycleId = this.context.getApplicationContext().on('abilityLifecycle', callbacks as ESObject);
+      this.lifecycleId = this.context.getApplicationContext().on('abilityLifecycle', callbacks);
     } catch (error) {
       Log.e(TAG, `Failed to register lifecycle listener: ${error}`);
     }
@@ -283,7 +352,7 @@ export function getCurrentCameraPreviewComponent(): CameraPreviewComponent | nul
   return currentCameraPreview;
 }
 
-function parseAreaDimension(value: Object | undefined): number {
+function parseAreaDimension(value: Length | undefined): number {
   if (value === undefined) {
     return 0;
   }
@@ -294,10 +363,38 @@ function parseAreaDimension(value: Object | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function readOnAreaChangeSize(newValue: ESObject): Size {
-  const rec = newValue as Record<string, Object>;
+function readOnAreaChangeSize(newValue: Area): Size {
   return {
-    width: parseAreaDimension(rec['width']),
-    height: parseAreaDimension(rec['height']),
+    width: parseAreaDimension(newValue.width),
+    height: parseAreaDimension(newValue.height),
   };
+}
+
+function readTouchType(eventObj: TouchEvent): number {
+  const type = Number(eventObj.type);
+  return Number.isFinite(type) ? Math.trunc(type) : -1;
+}
+
+function readTouchPoint(eventObj: TouchEvent): TouchPoint | null {
+  if (!eventObj.touches) {
+    return null;
+  }
+
+  const touches = eventObj.touches as Array<TouchRecord>;
+  if (touches.length === 0) {
+    return null;
+  }
+
+  const firstTouch = touches[0];
+  const x = Number(firstTouch.x);
+  const y = Number(firstTouch.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  const point: TouchPoint = {
+    x: x,
+    y: y,
+  };
+  return point;
 }
