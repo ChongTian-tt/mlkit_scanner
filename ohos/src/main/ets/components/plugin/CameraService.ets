@@ -74,7 +74,6 @@ export class CameraService {
   }
 
   private createImageReceiver(size: Size, format: number, capacity: number): image.ImageReceiver {
-    Log.w(TAG, `createImageReceiver with size: ${size.width}x${size.height}, format: ${format}, capacity: ${capacity}`);
     const previewSize: camera.Size = {
       width: size.width,
       height: size.height,
@@ -84,7 +83,6 @@ export class CameraService {
 
   // 外部调用以更新预览配置时，确保 ImageReceiver 的尺寸和格式与预览输出匹配，否则可能导致无法正确接收预览帧。
   private async ensureImageReceiver(size: Size): Promise<void> {
-    Log.w(TAG, `ensureImageReceiver requested with size: ${size.width}x${size.height}`);
     if (
       !this.isImageReceiverReleased &&
       this.previewProfileSize.width === size.width &&
@@ -117,7 +115,6 @@ export class CameraService {
   }
 
   private resolveCameraDevice(cameraId?: string): camera.CameraDevice | undefined {
-    Log.w(TAG, `resolveCameraDevice cameraId: ${cameraId}`);
     if (!this.safeLoadCameras()) {
       return undefined;
     }
@@ -165,7 +162,6 @@ export class CameraService {
         return (b.size.width * b.size.height) - (a.size.width * a.size.height);
       });
       const fallback = sorted[0];
-      Log.w(TAG, `getPreferredPreviewProfile fallback profile: ${fallback.size.width}x${fallback.size.height}`);
       this.preferredPreviewProfileCache[device.cameraId] = fallback;
       return fallback;
     } catch (error) {
@@ -280,7 +276,6 @@ export class CameraService {
   }
 
   async initCamera(XComponentSurfaceId: string, cameraId?: string): Promise<boolean> {
-    Log.w(TAG, `initCamera with cameraId: ${cameraId}, XComponentSurfaceId: ${XComponentSurfaceId}`);
     if (!this.safeLoadCameras() || !this.cameraManager) {
       Log.e(TAG, 'initCamera failed: camera manager unavailable');
       return false;
@@ -447,7 +442,6 @@ export class CameraService {
         : camera.FocusMode.FOCUS_MODE_AUTO;
       if (this.photoSession.isFocusModeSupported(targetMode)) {
         this.photoSession.setFocusMode(targetMode);
-        Log.w(TAG, `setFocusMode ${JSON.stringify(targetMode)}`);
       }
       return true;
     } catch (error) {
@@ -629,7 +623,6 @@ export class CameraService {
             // 对图片进行解码
             await this.decodeImageBuffer(imgComponent, nextImage.size.width, nextImage.size.height, scanCallback, nextImage);
           } else {
-            Log.w(TAG, 'onImageArrival component has empty byteBuffer');
             await nextImage.release();
           }
         });

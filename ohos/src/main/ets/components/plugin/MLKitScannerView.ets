@@ -92,7 +92,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: ESObject) {
     super();
-    Log.w(TAG, `MLKitScannerView constructor called with viewId: ${viewId}, args: ${JSON.stringify(args)}`);
     flutterMLKitScannerView = this;
     this.context = context;
     this.channel = new MethodChannel(messenger, PluginConstants.channelName);
@@ -125,7 +124,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 调整预览源尺寸，以适配 ScanKit 的宽高比要求，通常是竖屏扫码 9:16
   private normalizePreviewSourceSizeForDisplay(size: Size): Size {
-    Log.w(TAG, `normalizePreviewSourceSizeForDisplay called with size: ${size.width}x${size.height}`);
     if (size.width <= 0 || size.height <= 0) {
       return size;
     }
@@ -140,7 +138,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 刷新预览源尺寸并触发预览尺寸更新流程，通常在初始化和切换摄像头后调用
   private refreshPreviewSourceSize(): void {
-    Log.w(TAG, 'refreshPreviewSourceSize called');
     const service = this.getCameraService();
     const nextSize = service?.getPreferredPreviewSize(this.selectedCameraId) ?? null;
     if (!nextSize || nextSize.width <= 0 || nextSize.height <= 0) {
@@ -362,7 +359,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 绘制扫码框遮罩，扫码框大小和位置由 cropRect 决定
   private applyPreviewContainerSize(width: number, height: number): boolean {
-    Log.w(TAG, `applyPreviewContainerSize called with width: ${width}, height: ${height}`);
     this.containerSize = { width, height };
     const next = this.calcPreviewSizeAspectCover(width, height);
     const sizeChanged = next.width !== this.previewSize.width || next.height !== this.previewSize.height;
@@ -453,7 +449,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    * 9:16 等比 Cover：宽或高贴齐宿主，另一维放大后居中裁剪
    */
   private calcPreviewSizeAspectCover(cw: number, ch: number): Size {
-    Log.w(TAG, `calcPreviewSizeAspectCover called with container width: ${cw}, height: ${ch}`);
     if (cw <= 0 || ch <= 0) {
       return { width: 360, height: 640 };
     }
@@ -665,7 +660,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private async initCameraPreview(call: MethodCall, result: MethodResult): Promise<void> {
-    Log.w(TAG, 'initCameraPreview called');
     // 初始化相机预览
     if (!this.context) {
       result.error(PluginError.InitCameraError, 'context is undefined!', null);
@@ -936,7 +930,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 更新预览约束,如果新的预览尺寸与当前相同则直接返回成功,否则更新预览尺寸并应用新的约束,如果相机未初始化则返回错误
   private updateConstraints(call: MethodCall, result: MethodResult): void {
-    Log.w(TAG, 'updateConstraints called');
     const args = this.normalizeArgs(call.args as ESObject);
     const rawSize = this.parsePositiveSize(args);
     if (!rawSize) {
@@ -1184,7 +1177,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private setOhosCamera(call: MethodCall, result: MethodResult): void {
-    Log.w(TAG, 'setOhosCamera called');
     const args = this.normalizeArgs(call.args as ESObject);
     const position = Number(args['position']);
     const type = Number(args['type']);

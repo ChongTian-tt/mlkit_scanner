@@ -535,7 +535,6 @@ export struct CameraPreviewComponent {
     if (this.flutterMLKitScannerView) {
       this.flutterMLKitScannerView.userGrant = this.hasPermission;
     }
-    Log.i(TAG, `${scene} permission result: ${this.hasPermission}`);
   }
 
   async onInitCameraPreviewRequested(): Promise<void> {
