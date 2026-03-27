@@ -984,10 +984,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       result.success(true);
       return;
     }
-    // 恢复相机
-    if (!this.isCameraInitialized) {
-      this.isCameraInitialized = true;
-    }
 
     // 获取当前组件的状态是否是激活状态
     const comp = getCurrentCameraPreviewComponent();
@@ -1042,7 +1038,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       try {
         const service = this.getCameraService();
         await service?.preFrontRelease(true);
-        this.isCameraInitialized = false;
       } catch (error) {
         Log.e(TAG,
           `Failed to onHostBackground. isPausedByUser == true. Code: ${error.code}, message: ${error.message}`);

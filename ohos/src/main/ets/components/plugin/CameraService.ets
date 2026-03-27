@@ -619,32 +619,34 @@ export class CameraService {
           return;
         }
         // 根据图像的组件类型从图像中获取组件缓存
-        nextImage.getComponent(image.ComponentType.JPEG, (compErr: BusinessError, imgComponent: image.Component) => {
+        nextImage.getComponent(image.ComponentType.JPEG, async (compErr: BusinessError, imgComponent: image.Component) => {
           if (compErr || imgComponent === undefined) {
             Log.e(TAG, 'onImageArrival getComponent(JPEG) failed: ' + JSON.stringify(compErr));
-            nextImage.release();
+            await nextImage.release();
             return;
           }
           if (imgComponent.byteBuffer as ArrayBuffer) {
             // 对图片进行解码
-            this.decodeImageBuffer(imgComponent, nextImage.size.width, nextImage.size.height, scanCallback);
+            await this.decodeImageBuffer(imgComponent, nextImage.size.width, nextImage.size.height, scanCallback, nextImage);
           } else {
             Log.w(TAG, 'onImageArrival component has empty byteBuffer');
+            await nextImage.release();
           }
-          nextImage.release();
         });
       });
     });
   }
 
-  decodeImageBuffer(
+  async decodeImageBuffer(
     imgComponent: image.Component,
     width: number,
     height: number,
     scanCallback: (result: scanBarcode.ScanResult) => void,
-  ): void {
+    nextImage: image.Image
+  ): Promise<void> {
     const now = Date.now();
     if (now - this.lastDecodeAtMs < 800) {
+      await nextImage.release();
       return;
     }
     this.lastDecodeAtMs = now;
@@ -673,6 +675,8 @@ export class CameraService {
       }
     }).catch((error: BusinessError) => {
       Log.e(TAG, 'decodeImageBuffer failed: ' + error.message);
+    }).finally(async () => {
+      await nextImage.release();
     });
   }
 }
