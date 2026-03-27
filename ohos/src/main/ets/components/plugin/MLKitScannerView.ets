@@ -62,10 +62,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private containerSize: Size = { width: 0, height: 0 };
   // 扫描延迟，单位是毫秒
   private scanDelayMs: number = 100;
-  /**
-   * 预览缓冲为竖屏 9:16，禁止用横向比例以免拉变形。
-   * Cover：在不变形前提下等比放大直至铺满宿主，超出部分由 Stack clip 裁掉（等同 CameraView center crop）。
-   */
+  // 预览尺寸的默认比例。初始化早期在尚未拿到真实相机 profile 前，先使用该比例占位。
   private static readonly PREVIEW_RATIO_W: number = 9;
   private static readonly PREVIEW_RATIO_H: number = 16;
   private previewState: PreviewState = {
@@ -84,11 +81,17 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private selectedCameraTypeCode: number = 0;
   private selectedCameraId: string = '';
   private cameraService: CameraService | null = null;
+  // 预览源尺寸宽高比
+  private previewSourceSize: Size = {
+    width: MLKitScannerView.PREVIEW_RATIO_W,
+    height: MLKitScannerView.PREVIEW_RATIO_H,
+  };
   private isFrameListenerBound: boolean = false;
   private isPreviewStarting: boolean = false;
 
   constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: ESObject) {
     super();
+    Log.w(TAG, `MLKitScannerView constructor called with viewId: ${viewId}, args: ${JSON.stringify(args)}`);
     flutterMLKitScannerView = this;
     this.context = context;
     this.channel = new MethodChannel(messenger, PluginConstants.channelName);
@@ -96,6 +99,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     this.previewSize = this.parsePreviewSize(args);
     this.cameraService = this.createCameraService();
+    this.refreshPreviewSourceSize();
+    this.previewSize = this.calcPreviewSizeAspectCover(this.containerSize.width, this.containerSize.height);
   }
 
   private createCameraService(): CameraService | null {
@@ -117,6 +122,32 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       this.cameraService = this.createCameraService();
     }
     return this.cameraService;
+  }
+
+  // 调整预览源尺寸，以适配 ScanKit 的宽高比要求，通常是竖屏扫码 9:16
+  private normalizePreviewSourceSizeForDisplay(size: Size): Size {
+    Log.w(TAG, `normalizePreviewSourceSizeForDisplay called with size: ${size.width}x${size.height}`);
+    if (size.width <= 0 || size.height <= 0) {
+      return size;
+    }
+    if (size.width > size.height) {
+      return {
+        width: size.height,
+        height: size.width,
+      };
+    }
+    return size;
+  }
+
+  // 刷新预览源尺寸并触发预览尺寸更新流程，通常在初始化和切换摄像头后调用
+  private refreshPreviewSourceSize(): void {
+    Log.w(TAG, 'refreshPreviewSourceSize called');
+    const service = this.getCameraService();
+    const nextSize = service?.getPreferredPreviewSize(this.selectedCameraId) ?? null;
+    if (!nextSize || nextSize.width <= 0 || nextSize.height <= 0) {
+      return;
+    }
+    this.previewSourceSize = this.normalizePreviewSourceSizeForDisplay(nextSize);
   }
 
   private extractScanRect(result: scanBarcode.ScanResult): ScanRectLike | null {
@@ -322,15 +353,22 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
     this.lastHostLayoutW = w;
     this.lastHostLayoutH = h;
-    this.containerSize = { width: w, height: h };
-    const next = this.calcPreviewSizeAspectCover(w, h);
-    const sizeChanged = next.width !== this.previewSize.width || next.height !== this.previewSize.height;
-    this.previewSize = next;
+    const sizeChanged = this.applyPreviewContainerSize(w, h);
     getCurrentCameraPreviewComponent()?.applyCropRect();
     if (sizeChanged && this.surfaceId && this.isCameraInitialized && this.previewState.isRunning &&
       !this.previewState.isPausedByUser) {
       void this.restartPreviewAfterLayoutChange();
     }
+  }
+
+  // 绘制扫码框遮罩，扫码框大小和位置由 cropRect 决定
+  private applyPreviewContainerSize(width: number, height: number): boolean {
+    Log.w(TAG, `applyPreviewContainerSize called with width: ${width}, height: ${height}`);
+    this.containerSize = { width, height };
+    const next = this.calcPreviewSizeAspectCover(width, height);
+    const sizeChanged = next.width !== this.previewSize.width || next.height !== this.previewSize.height;
+    this.previewSize = next;
+    return sizeChanged;
   }
 
   private async restartPreviewAfterLayoutChange(): Promise<void> {
@@ -416,18 +454,25 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    * 9:16 等比 Cover：宽或高贴齐宿主，另一维放大后居中裁剪
    */
   private calcPreviewSizeAspectCover(cw: number, ch: number): Size {
+    Log.w(TAG, `calcPreviewSizeAspectCover called with container width: ${cw}, height: ${ch}`);
     if (cw <= 0 || ch <= 0) {
       return { width: 360, height: 640 };
     }
-    const aspect: number = MLKitScannerView.PREVIEW_RATIO_W / MLKitScannerView.PREVIEW_RATIO_H;
+    const sourceWidth = this.previewSourceSize.width > 0
+      ? this.previewSourceSize.width
+      : MLKitScannerView.PREVIEW_RATIO_W;
+    const sourceHeight = this.previewSourceSize.height > 0
+      ? this.previewSourceSize.height
+      : MLKitScannerView.PREVIEW_RATIO_H;
+    const aspect: number = sourceWidth / sourceHeight;
     let width: number;
     let height: number;
     if (cw / ch > aspect) {
       width = Math.round(cw);
-      height = Math.round((cw * MLKitScannerView.PREVIEW_RATIO_H) / MLKitScannerView.PREVIEW_RATIO_W);
+      height = Math.round((cw * sourceHeight) / sourceWidth);
     } else {
       height = Math.round(ch);
-      width = Math.round((ch * MLKitScannerView.PREVIEW_RATIO_W) / MLKitScannerView.PREVIEW_RATIO_H);
+      width = Math.round((ch * sourceWidth) / sourceHeight);
     }
     return { width, height };
   }
@@ -621,6 +666,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private async initCameraPreview(call: MethodCall, result: MethodResult): Promise<void> {
+    Log.w(TAG, 'initCameraPreview called');
     // 初始化相机预览
     if (!this.context) {
       result.error(PluginError.InitCameraError, 'context is undefined!', null);
@@ -650,6 +696,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
           service.findCameraIdByOhosCodes(this.selectedCameraPositionCode, this.selectedCameraTypeCode) ?? '';
       }
     }
+    this.refreshPreviewSourceSize();
+    this.applyPreviewContainerSize(this.containerSize.width, this.containerSize.height);
 
     const comp = getCurrentCameraPreviewComponent();
     if (comp) {
@@ -889,6 +937,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 更新预览约束,如果新的预览尺寸与当前相同则直接返回成功,否则更新预览尺寸并应用新的约束,如果相机未初始化则返回错误
   private updateConstraints(call: MethodCall, result: MethodResult): void {
+    Log.w(TAG, 'updateConstraints called');
     const args = this.normalizeArgs(call.args as ESObject);
     const rawSize = this.parsePositiveSize(args);
     if (!rawSize) {
@@ -899,14 +948,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       );
       return;
     }
-    this.containerSize = { width: rawSize.width, height: rawSize.height };
-    const newSize = this.calcPreviewSizeAspectCover(rawSize.width, rawSize.height);
-    if (this.previewSize.width === newSize.width && this.previewSize.height === newSize.height) {
+    const sizeChanged = this.applyPreviewContainerSize(rawSize.width, rawSize.height);
+    if (!sizeChanged) {
       result.success(true);
       return;
     }
 
-    this.previewSize = newSize;
     const comp = getCurrentCameraPreviewComponent();
     if (comp) {
       comp.applyCropRect();
@@ -1145,6 +1192,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private setOhosCamera(call: MethodCall, result: MethodResult): void {
+    Log.w(TAG, 'setOhosCamera called');
     const args = this.normalizeArgs(call.args as ESObject);
     const position = Number(args['position']);
     const type = Number(args['type']);
@@ -1185,6 +1233,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     this.selectedCameraPositionCode = reqPosition;
     this.selectedCameraTypeCode = reqType;
+    this.refreshPreviewSourceSize();
+    this.applyPreviewContainerSize(this.containerSize.width, this.containerSize.height);
+    getCurrentCameraPreviewComponent()?.applyCropRect();
 
     if (this.isCameraInitialized && this.surfaceId && !this.previewState.isPausedByUser) {
       void this.restartPreviewAfterLayoutChange();

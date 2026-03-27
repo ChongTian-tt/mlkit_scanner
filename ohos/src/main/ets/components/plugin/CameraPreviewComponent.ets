@@ -13,21 +13,14 @@
  * limitations under the License.
  */
 
-import { display } from '@kit.ArkUI';
 import { Log } from '@ohos/flutter_ohos';
 import { common, AbilityLifecycleCallback } from '@kit.AbilityKit';
 import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
 import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
-import { CropRect, PluginConstants, PluginError, Size, TouchPoint, TouchRecord } from './PluginConstants';
+import { CropRect, PluginConstants, PluginError, Size, TouchPoint, TouchRecord, LockVisualState } from './PluginConstants';
 
 const TAG: string = '[CameraPreviewComponent:]';
-
-interface LockVisualState {
-  left: number;
-  top: number;
-  opacity: number;
-}
 
 let currentCameraPreview: CameraPreviewComponent | null = null;
 
@@ -42,23 +35,36 @@ export struct CameraPreviewComponent {
   private TOUCH_TYPE_DOWN: number = 0;
   private TOUCH_TYPE_UP: number = 1;
   private TOUCH_TYPE_CANCEL: number = 3;
+  // 触摸时间戳和坐标，用于判断长按和对焦位置
   private touchDownAtMs: number = -1;
   private touchDownX: number = 0;
   private touchDownY: number = 0;
+  // 当前触摸是否仍在按压中，以及是否已经触发过锁定（长按）逻辑，避免重复触发
   private isTouchPressed: boolean = false;
+  // 锁定对焦动画状态：记录是否显示锁定图标、动画进度等，用于在 render 中计算锁定图标位置和透明度
   private lockTriggeredInCurrentTouch: boolean = false;
   private longPressTimerId: number = -1;
+  // 对焦提示和锁定状态的定时器 ID，用于在组件卸载或状态变化时清理
   private focusHintTimerId: number = -1;
   private focusLockAnimTimerId: number = -1;
+  // 锁定动画参数：定义锁定图标淡入和位移动画的时长，以及动画更新的时间间隔，确保动画平滑且性能可控
   private static readonly LOCK_FADE_IN_DURATION_MS: number = 300;
+  // 锁定动画总时长包括淡入和位移，确保在动画过程中正确计算锁定图标的透明度和位置
   private static readonly LOCK_MOVE_DURATION_MS: number = 500;
+  // 锁定动画总时长，确保在动画过程中正确计算锁定图标的透明度和位置
   private static readonly LOCK_ANIM_DURATION_MS: number =
     CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS + CameraPreviewComponent.LOCK_MOVE_DURATION_MS;
+  // 锁定动画更新间隔，通常设置为 16ms 以实现约 60fps 的动画效果，确保动画平滑且性能可控
   private static readonly LOCK_ANIM_INTERVAL_MS: number = 16;
+  // 对焦环和锁定图标的尺寸和位置参数
   private static readonly FOCUS_RING_DIAMETER: number = 60;
+  // 对焦环半径
   private static readonly FOCUS_RING_RADIUS: number = CameraPreviewComponent.FOCUS_RING_DIAMETER / 2;
+  // 对焦环边框宽度
   private static readonly FOCUS_RING_STROKE: number = 1;
+  // 锁定图标尺寸
   private static readonly LOCK_ICON_SIZE: number = 24;
+  // 锁定图标在预览区域内的目标位置（相对于可见预览区域的左上角内缩）
   private static readonly LOCK_TARGET_INSET_LEFT: number = 17;
   private static readonly LOCK_TARGET_INSET_TOP: number = 20;
   @Prop flutterMLKitScannerView: MLKitScannerView | null = null;
@@ -72,13 +78,13 @@ export struct CameraPreviewComponent {
   @State offsetY: number = 0;
   // 裁剪矩形状态
   @State cropRectState: CropRect | null = null;
-  @State hostWidthState: number = 0;
-  @State hostHeightState: number = 0;
   //  扫描仪是否处于活动状态（改变覆盖边框颜色）
   @State isActive: boolean = false;
-  @State focusPointState: TouchPoint | null = null;
+  // 对焦状态
   @State showFocusState: boolean = false;
+  // 锁定状态
   @State isFocusLockedState: boolean = false;
+  // 锁定动画进度（0-1）
   @State focusLockAnimProgressState: number = 1;
 
   build() {
@@ -117,7 +123,7 @@ export struct CameraPreviewComponent {
               this.isActive,
             )
         }
-
+        // 对焦环
         if (this.shouldShowFocusRing()) {
           Stack() {
           }
@@ -134,7 +140,7 @@ export struct CameraPreviewComponent {
               y: this.getFocusRingTop(),
             })
         }
-
+        // 锁定图标
         if (this.hasLockVisualState()) {
           Image($r('app.media.lock_fill'))
             .align(Alignment.TopStart)
@@ -160,13 +166,12 @@ export struct CameraPreviewComponent {
       void oldValue;
       const dims: Size = readOnAreaChangeSize(newValue);
       if (dims.width > 0 && dims.height > 0) {
-        this.hostWidthState = dims.width;
-        this.hostHeightState = dims.height;
         getCurrentMLKitScannerView()?.onPreviewHostAreaChange(dims.width, dims.height);
       }
     })
   }
 
+  // 计算焦点位置（相对于预览坐标系）
   private getFocusCenter(): TouchPoint | null {
     if (this.cameraWidth <= 0 || this.cameraHeight <= 0) {
       return null;
@@ -185,6 +190,7 @@ export struct CameraPreviewComponent {
     return Math.max(0, this.offsetY);
   }
 
+  // 计算锁定图标的视觉状态（位置和透明度）
   private getLockVisualState(): LockVisualState | null {
     if (!this.showFocusState || !this.isFocusLockedState) {
       return null;
@@ -193,27 +199,39 @@ export struct CameraPreviewComponent {
     if (!focusCenter) {
       return null;
     }
-
-    const progress = Math.max(0, Math.min(1, this.focusLockAnimProgressState)); // 将动画总进度限制在 0 到 1 之间
-    const fadeProgress = Math.max( // 计算锁图标淡入阶段的透明度进度
-      0, // 透明度下限为 0
-      Math.min(1, progress * CameraPreviewComponent.LOCK_ANIM_DURATION_MS / // 将总进度映射到淡入阶段的时间轴
-        CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS), // 以淡入时长归一化得到淡入进度
-    ); // 得到最终的淡入透明度
-    const movePhaseElapsed = Math.max( // 计算位移动画阶段已经消耗的时间
-      0, // 位移阶段已消耗时间不允许小于 0
-      progress * CameraPreviewComponent.LOCK_ANIM_DURATION_MS - CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS, // 总耗时减去淡入阶段耗时后得到位移阶段耗时
-    ); // 得到位移阶段已运行的实际时长
-    const moveProgress = Math.max( // 计算位移动画的归一化进度
-      0, // 位移进度下限为 0
-      Math.min(1, movePhaseElapsed / CameraPreviewComponent.LOCK_MOVE_DURATION_MS), // 按位移总时长归一化并限制在 0 到 1 之间
-    ); // 得到位移动画的标准化进度
-    const easedMove = 1 - Math.pow(1 - moveProgress, 3); // 使用 ease-out 曲线让移动末端更平滑
-    const iconHalf = CameraPreviewComponent.LOCK_ICON_SIZE / 2; // 计算锁图标一半尺寸用于垂直居中对齐
-    const startLeft = focusCenter.x - CameraPreviewComponent.FOCUS_RING_RADIUS - CameraPreviewComponent.LOCK_ICON_SIZE; // 锁图标起点位于焦圈正左侧
-    const startTop = focusCenter.y - iconHalf; // 锁图标起点在纵向上与焦圈中心对齐
-    const endLeft = this.getVisiblePreviewLeft() + CameraPreviewComponent.LOCK_TARGET_INSET_LEFT; // 锁图标终点横坐标位于可见预览区域左侧内缩位置
-    const endTop = this.getVisiblePreviewTop() + CameraPreviewComponent.LOCK_TARGET_INSET_TOP; // 锁图标终点纵坐标位于可见预览区域顶部内缩位置
+    // 将动画总进度限制在 0 到 1 之间
+    const progress = Math.max(0, Math.min(1, this.focusLockAnimProgressState));
+    // 计算锁图标淡入阶段的透明度进度
+    const fadeProgress = Math.max(
+      0,
+      // 将总进度映射到淡入阶段的时间轴，以淡入时长归一化得到淡入进度
+      Math.min(1, progress * CameraPreviewComponent.LOCK_ANIM_DURATION_MS /
+        CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS),
+    );
+    // 计算位移动画阶段已经消耗的时间
+    const movePhaseElapsed = Math.max(
+      0,
+      // 总耗时减去淡入阶段耗时后得到位移阶段耗时
+      progress * CameraPreviewComponent.LOCK_ANIM_DURATION_MS - CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS,
+    );
+    // 计算位移动画的归一化进度
+    const moveProgress = Math.max(
+      0,
+      // 按位移总时长归一化并限制在 0 到 1 之间
+      Math.min(1, movePhaseElapsed / CameraPreviewComponent.LOCK_MOVE_DURATION_MS),
+    );
+    // 使用 ease-out 曲线让移动末端更平滑
+    const easedMove = 1 - Math.pow(1 - moveProgress, 3);
+    // 计算锁图标一半尺寸用于垂直居中对齐
+    const iconHalf = CameraPreviewComponent.LOCK_ICON_SIZE / 2;
+    // 锁图标起点位于焦圈正左侧
+    const startLeft = focusCenter.x - CameraPreviewComponent.FOCUS_RING_RADIUS - CameraPreviewComponent.LOCK_ICON_SIZE;
+    // 锁图标起点在纵向上与焦圈中心对齐
+    const startTop = focusCenter.y - iconHalf;
+    // 锁图标终点横坐标位于可见预览区域左侧内缩位置
+    const endLeft = this.getVisiblePreviewLeft() + CameraPreviewComponent.LOCK_TARGET_INSET_LEFT;
+    // 锁图标终点纵坐标位于可见预览区域顶部内缩位置
+    const endTop = this.getVisiblePreviewTop() + CameraPreviewComponent.LOCK_TARGET_INSET_TOP;
 
     return {
       left: startLeft + (endLeft - startLeft) * easedMove,
@@ -241,10 +259,12 @@ export struct CameraPreviewComponent {
     return state ? state.opacity : 0;
   }
 
+  // 当锁定动画完成后，持续显示锁定图标直到下一次对焦操作触发
   private shouldHideFocusRing(): boolean {
     return this.isFocusLockedState && this.focusLockAnimProgressState >= 0.999;
   }
 
+  // 显示对焦环的条件：必须处于对焦状态，且不满足持续显示锁定图标的条件（即未锁定或锁定动画未完成），且能够获取到焦点中心坐标
   private shouldShowFocusRing(): boolean {
     return this.showFocusState && !this.shouldHideFocusRing() && this.getFocusCenter() !== null;
   }
@@ -259,6 +279,7 @@ export struct CameraPreviewComponent {
     return center ? center.y - CameraPreviewComponent.FOCUS_RING_RADIUS : 0;
   }
 
+  // 处理对焦触摸事件
   private handleFocusTouch(eventObj: TouchEvent): void {
     if (!this.flutterMLKitScannerView || this.cameraWidth <= 0 || this.cameraHeight <= 0) {
       return;
@@ -278,7 +299,7 @@ export struct CameraPreviewComponent {
       return;
     }
 
-    // UP：如果长按已触发，则只结束本次触摸；否则按轻触对焦处理
+    // UP 如果长按已触发，则只结束本次触摸；否则按轻触对焦处理
     if (touchType === this.TOUCH_TYPE_UP) {
       if (!this.isTouchPressed || this.touchDownAtMs < 0) {
         return;
@@ -292,9 +313,8 @@ export struct CameraPreviewComponent {
       if (this.lockTriggeredInCurrentTouch) {
         return;
       }
-
+      // 轻触对焦：显示对焦提示但不锁定，3秒后自动隐藏；如果在提示显示期间再次轻触，则更新对焦位置和重置隐藏计时
       this.updateFocusHint(false);
-      Log.w(TAG, `Focus touch at (${focusX}, ${focusY}), needLock=false`);
       this.flutterMLKitScannerView.handleUserFocusGesture(
         focusX,
         focusY,
@@ -305,6 +325,7 @@ export struct CameraPreviewComponent {
       return;
     }
 
+    // CANCEL 事件时清理状态和计时，避免残留状态影响下一次触摸
     if (touchType === this.TOUCH_TYPE_CANCEL) {
       this.clearLongPressTimer();
       this.isTouchPressed = false;
@@ -320,6 +341,7 @@ export struct CameraPreviewComponent {
     }
   }
 
+  // 启动长按计时器，在达到长按阈值后触发锁定对焦逻辑，并更新状态以显示锁定动画
   private startLongPressTimer(): void {
     this.clearLongPressTimer();
     this.longPressTimerId = setTimeout(() => {
@@ -332,7 +354,6 @@ export struct CameraPreviewComponent {
       const focusX = this.touchDownX;
       const focusY = this.touchDownY;
       this.updateFocusHint(true);
-      Log.w(TAG, `Focus touch at (${focusX}, ${focusY}), needLock=true`);
       this.flutterMLKitScannerView?.handleUserFocusGesture(
         focusX,
         focusY,
@@ -357,6 +378,7 @@ export struct CameraPreviewComponent {
     }
   }
 
+  // 启动锁定动画：重置动画状态并使用 setInterval 定时更新动画进度，直到动画完成后清理计时器
   private startFocusLockAnim(): void {
     this.clearFocusLockAnimTimer();
     this.focusLockAnimProgressState = 0;
@@ -372,16 +394,9 @@ export struct CameraPreviewComponent {
     }, CameraPreviewComponent.LOCK_ANIM_INTERVAL_MS) as number;
   }
 
+  // 更新对焦提示状态：根据是否锁定设置不同的状态，并启动或重置锁定动画
   private updateFocusHint(needLock: boolean): void {
     this.clearFocusHintTimer();
-    const centerPoint: TouchPoint = {
-      x: this.offsetX + this.cameraWidth / 2,
-      y: this.offsetY + this.cameraHeight / 2,
-    };
-    this.focusPointState = {
-      x: centerPoint.x,
-      y: centerPoint.y,
-    };
     this.showFocusState = true;
     this.isFocusLockedState = needLock;
     if (needLock) {
@@ -391,7 +406,7 @@ export struct CameraPreviewComponent {
       this.focusLockAnimProgressState = 1;
     }
 
-    // 轻触仅短暂显示对焦圈；长按锁定时保持显示，直到下一次轻触触发。
+    // 如果是轻触触发的对焦，则 900ms 后自动隐藏提示和重置锁定状态
     if (!needLock) {
       this.focusHintTimerId = setTimeout(() => {
         this.showFocusState = false;
@@ -580,9 +595,6 @@ export struct CameraPreviewComponent {
       if (previewSize.width > 0 && previewSize.height > 0) {
         this.cameraWidth = previewSize.width;
         this.cameraHeight = previewSize.height;
-      } else if (this.cameraWidth === 0 || this.cameraHeight === 0) {
-        this.cameraWidth = this.getUIContext().px2vp(display.getDefaultDisplaySync().width);
-        this.cameraHeight = this.getUIContext().px2vp(display.getDefaultDisplaySync().height);
       }
       // 2. XComponent 居中（Center Crop：可为负值以裁剪溢出）
       const container = this.flutterMLKitScannerView.getContainerSize();
@@ -609,6 +621,7 @@ export function getCurrentCameraPreviewComponent(): CameraPreviewComponent | nul
   return currentCameraPreview;
 }
 
+// 解析 Area 维度，支持 number 或字符串形式的数字，返回有效的数值或 0
 function parseAreaDimension(value: Length | undefined): number {
   if (value === undefined) {
     return 0;
@@ -620,6 +633,7 @@ function parseAreaDimension(value: Length | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+// 从 Area 变化事件中提取新的宽高，返回 Size 对象
 function readOnAreaChangeSize(newValue: Area): Size {
   return {
     width: parseAreaDimension(newValue.width),
@@ -627,11 +641,13 @@ function readOnAreaChangeSize(newValue: Area): Size {
   };
 }
 
+// 解析触摸事件类型，返回标准化的触摸类型常量，未识别时返回 -1
 function readTouchType(eventObj: TouchEvent): number {
   const type = Number(eventObj.type);
   return Number.isFinite(type) ? Math.trunc(type) : -1;
 }
 
+// 解析触摸事件中的第一个触点坐标，返回 TouchPoint 对象或 null
 function readTouchPoint(eventObj: TouchEvent): TouchPoint | null {
   if (!eventObj.touches) {
     return null;

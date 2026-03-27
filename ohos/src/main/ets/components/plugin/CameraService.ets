@@ -18,10 +18,14 @@ import { camera } from '@kit.CameraKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { Log, MethodResult } from '@ohos/flutter_ohos';
 import { detectBarcode, scanBarcode, scanCore } from '@kit.ScanKit';
+import { Size } from './PluginConstants';
 
 const TAG = '[CameraService]:';
 
 export class CameraService {
+  private static readonly DEFAULT_PREVIEW_WIDTH: number = 1920;
+  private static readonly DEFAULT_PREVIEW_HEIGHT: number = 1080;
+  private static readonly DEFAULT_CAMERA_CACHE_KEY: string = '__default__';
   public cameraManager: camera.CameraManager | undefined = undefined;
   // 相机缓存，避免频繁调用 getSupportedCameras 导致性能问题
   private static readonly CAMERA_CACHE_TTL_MS: number = 3000;
@@ -45,7 +49,14 @@ export class CameraService {
   private readonly setSharedFlashStatus: (status: boolean) => void;
   // 图像接收器，用于接收相机预览帧并进行扫码解码
   public imageReceiver: image.ImageReceiver;
+  // 标记是否已释放 ImageReceiver，避免重复释放导致错误
   private isImageReceiverReleased: boolean = false;
+  // 当前预览配置的尺寸，单位是像素。初始值为默认预览尺寸，后续会根据实际相机 profile 更新。
+  private previewProfileSize: Size = {
+    width: CameraService.DEFAULT_PREVIEW_WIDTH,
+    height: CameraService.DEFAULT_PREVIEW_HEIGHT,
+  };
+  private preferredPreviewProfileCache: Record<string, camera.Profile> = {};
 
   constructor(
     context: Context,
@@ -57,14 +68,136 @@ export class CameraService {
     this.getSharedFlashStatus = getSharedFlashStatus ?? (() => false);
     this.setSharedFlashStatus = setSharedFlashStatus ?? ((_: boolean) => {
     });
-    // TODO: 固定使用 1920x1080 的预览分辨率，兼容性较好且性能可控。实际使用中会根据设备支持情况进行回退选择。
-    const previewSize: camera.Size = { width: 1920, height: 1080 } as camera.Size;
-    if (imgReceiver === undefined) {
-      // 通过图片大小、图片格式、容量创建ImageReceiver实例
-      this.imageReceiver = image.createImageReceiver(previewSize, image.ImageFormat.JPEG, 1);
-    } else {
-      this.imageReceiver = image.createImageReceiver(previewSize, imgReceiver.format, imgReceiver.capacity);
+    const receiverFormat = imgReceiver?.format ?? image.ImageFormat.JPEG;
+    const receiverCapacity = imgReceiver?.capacity ?? 1;
+    this.imageReceiver = this.createImageReceiver(this.previewProfileSize, receiverFormat, receiverCapacity);
+  }
+
+  private createImageReceiver(size: Size, format: number, capacity: number): image.ImageReceiver {
+    Log.w(TAG, `createImageReceiver with size: ${size.width}x${size.height}, format: ${format}, capacity: ${capacity}`);
+    const previewSize: camera.Size = {
+      width: size.width,
+      height: size.height,
+    } as camera.Size;
+    return image.createImageReceiver(previewSize, format, capacity);
+  }
+
+  // 外部调用以更新预览配置时，确保 ImageReceiver 的尺寸和格式与预览输出匹配，否则可能导致无法正确接收预览帧。
+  private async ensureImageReceiver(size: Size): Promise<void> {
+    Log.w(TAG, `ensureImageReceiver requested with size: ${size.width}x${size.height}`);
+    if (
+      !this.isImageReceiverReleased &&
+      this.previewProfileSize.width === size.width &&
+      this.previewProfileSize.height === size.height
+    ) {
+      return;
     }
+
+    try {
+      if (!this.isImageReceiverReleased) {
+        await this.imageReceiver.release();
+      }
+    } catch (error) {
+      Log.w(TAG, 'ensureImageReceiver release skipped: ' + JSON.stringify(error));
+    }
+
+    this.previewProfileSize = {
+      width: size.width,
+      height: size.height,
+    };
+    this.imageReceiver = this.createImageReceiver(this.previewProfileSize, image.ImageFormat.JPEG, 1);
+    this.isImageReceiverReleased = false;
+  }
+
+  private getPreviewProfileCacheKey(cameraId?: string): string {
+    if (cameraId && cameraId.length > 0) {
+      return cameraId;
+    }
+    return CameraService.DEFAULT_CAMERA_CACHE_KEY;
+  }
+
+  private resolveCameraDevice(cameraId?: string): camera.CameraDevice | undefined {
+    Log.w(TAG, `resolveCameraDevice cameraId: ${cameraId}`);
+    if (!this.safeLoadCameras()) {
+      return undefined;
+    }
+    if (cameraId) {
+      const matched = this.camerasDevices.find((dev) => dev.cameraId === cameraId);
+      if (matched) {
+        return matched;
+      }
+    }
+    return this.camerasDevices[0];
+  }
+
+  private getPreferredPreviewProfile(device: camera.CameraDevice): camera.Profile | undefined {
+    const cachedProfile = this.preferredPreviewProfileCache[device.cameraId];
+    if (cachedProfile) {
+      return cachedProfile;
+    }
+    if (!this.cameraManager) {
+      return undefined;
+    }
+    try {
+      const profiles = this.cameraManager.getSupportedOutputCapability(
+        device,
+        camera.SceneMode.NORMAL_PHOTO,
+      );
+      const previewProfiles = profiles.previewProfiles;
+      if (!previewProfiles || previewProfiles.length === 0) {
+        Log.e(TAG, 'getPreferredPreviewProfile no preview profiles');
+        return undefined;
+      }
+
+      const preferred = previewProfiles.find((profile: camera.Profile) => {
+        return (
+          profile.size.width === CameraService.DEFAULT_PREVIEW_WIDTH &&
+          profile.size.height === CameraService.DEFAULT_PREVIEW_HEIGHT
+        );
+      });
+      if (preferred) {
+        this.preferredPreviewProfileCache[device.cameraId] = preferred;
+        return preferred;
+      }
+
+      const sorted = [...previewProfiles].sort((a: camera.Profile, b: camera.Profile) => {
+        return (b.size.width * b.size.height) - (a.size.width * a.size.height);
+      });
+      const fallback = sorted[0];
+      Log.w(TAG, `getPreferredPreviewProfile fallback profile: ${fallback.size.width}x${fallback.size.height}`);
+      this.preferredPreviewProfileCache[device.cameraId] = fallback;
+      return fallback;
+    } catch (error) {
+      Log.e(TAG, 'getPreferredPreviewProfile failed: ' + JSON.stringify(error));
+      return undefined;
+    }
+  }
+
+  // 外部调用以获取预览尺寸时，返回当前预览配置的尺寸，供 MLKitScannerView 计算扫码框遮罩等布局逻辑使用。
+  public getPreferredPreviewSize(cameraId?: string): Size | null {
+    const cacheKey = this.getPreviewProfileCacheKey(cameraId);
+    const cachedProfile = this.preferredPreviewProfileCache[cacheKey];
+    if (cachedProfile) {
+      return {
+        width: cachedProfile.size.width,
+        height: cachedProfile.size.height,
+      };
+    }
+    const device = this.resolveCameraDevice(cameraId);
+    if (!device) {
+      return null;
+    }
+    const profile = this.getPreferredPreviewProfile(device);
+    if (!profile) {
+      return null;
+    }
+    const resolvedSize: Size = {
+      width: profile.size.width,
+      height: profile.size.height,
+    };
+    this.preferredPreviewProfileCache[device.cameraId] = profile;
+    this.preferredPreviewProfileCache[cacheKey] = profile;
+    return resolvedSize;
   }
 
   private safeLoadCameras(): boolean {
@@ -146,55 +279,17 @@ export class CameraService {
     }
   }
 
-  // 获取预览配置
-  getPreviewProfilesObj(): camera.Profile | undefined {
-    if (!this.cameraManager || !this.curcamerasDevice) {
-      return undefined;
-    }
-    try {
-      // 查询相机设备在指定模式下支持的输出能力，同步返回结果
-      const profiles = this.cameraManager.getSupportedOutputCapability(
-        this.curcamerasDevice,
-        camera.SceneMode.NORMAL_PHOTO,
-      );
-      // 支持的预览配置信息集合
-      const previewProfiles = profiles.previewProfiles;
-      if (!previewProfiles || previewProfiles.length === 0) {
-        Log.e(TAG, 'getPreviewProfilesObj no preview profiles');
-        return undefined;
-      }
-      // TODO: 优先选择 1920x1080 的预览分辨率，兼容性较好且性能可控。实际使用中会根据设备支持情况进行回退选择。
-      const preferred = previewProfiles.find((profile: camera.Profile) => {
-        return profile.size.width === 1920 && profile.size.height === 1080;
-      });
-      if (preferred) {
-        return preferred;
-      }
-
-      // 回退到分辨率最高的可用 profile，避免设备不支持固定 1920x1080 时无预览。
-      const sorted = [...previewProfiles].sort((a: camera.Profile, b: camera.Profile) => {
-        return (b.size.width * b.size.height) - (a.size.width * a.size.height);
-      });
-      const fallback = sorted[0];
-      Log.w(TAG, `getPreviewProfilesObj fallback profile: ${fallback.size.width}x${fallback.size.height}`);
-      return fallback;
-    } catch (error) {
-      Log.e(TAG, 'getPreviewProfilesObj failed: ' + JSON.stringify(error));
-      return undefined;
-    }
-  }
-
   async initCamera(XComponentSurfaceId: string, cameraId?: string): Promise<boolean> {
+    Log.w(TAG, `initCamera with cameraId: ${cameraId}, XComponentSurfaceId: ${XComponentSurfaceId}`);
     if (!this.safeLoadCameras() || !this.cameraManager) {
       Log.e(TAG, 'initCamera failed: camera manager unavailable');
       return false;
     }
 
-    if (cameraId) {
-      this.curcamerasDevice = this.camerasDevices.find((dev) => dev.cameraId === cameraId);
-    }
+    this.curcamerasDevice = this.resolveCameraDevice(cameraId);
     if (!this.curcamerasDevice) {
-      this.curcamerasDevice = this.camerasDevices[0];
+      Log.e(TAG, 'initCamera failed: camera device unavailable');
+      return false;
     }
 
     try {
@@ -206,11 +301,16 @@ export class CameraService {
         return false;
       }
 
-      const previewProfile = this.getPreviewProfilesObj();
+      const previewProfile = this.getPreferredPreviewProfile(this.curcamerasDevice);
       if (!previewProfile) {
         Log.e(TAG, 'preview profile not found');
         return false;
       }
+
+      await this.ensureImageReceiver({
+        width: previewProfile.size.width,
+        height: previewProfile.size.height,
+      });
 
       // 创建一个预览输出对象，输出到 XComponentSurfaceId 以显示预览画面
       this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, XComponentSurfaceId);
@@ -238,7 +338,10 @@ export class CameraService {
       // 设置连续自动对焦模式
       this.setFocusMode(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO);
       this.isStop = false;
-      this.isImageReceiverReleased = false;
+      this.previewProfileSize = {
+        width: previewProfile.size.width,
+        height: previewProfile.size.height,
+      };
       return true;
     } catch (error) {
       Log.e(TAG, 'initCamera failed: ' + JSON.stringify(error));
