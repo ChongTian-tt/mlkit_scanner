@@ -23,6 +23,12 @@ import { CropRect, PluginConstants, PluginError, Size, TouchPoint, TouchRecord }
 
 const TAG: string = '[CameraPreviewComponent:]';
 
+interface LockVisualState {
+  left: number;
+  top: number;
+  opacity: number;
+}
+
 let currentCameraPreview: CameraPreviewComponent | null = null;
 
 @Component
@@ -31,6 +37,7 @@ export struct CameraPreviewComponent {
   private context = this.getUIContext().getHostContext() as common.UIAbilityContext;
   private isScanKitInitialized: boolean = false;
   private lifecycleId: number = -1;
+  // 长按对焦时间阈值 通常 >500ms 被认为是长按
   private LONG_PRESS_THRESHOLD_MS: number = 500;
   private TOUCH_TYPE_DOWN: number = 0;
   private TOUCH_TYPE_UP: number = 1;
@@ -38,6 +45,22 @@ export struct CameraPreviewComponent {
   private touchDownAtMs: number = -1;
   private touchDownX: number = 0;
   private touchDownY: number = 0;
+  private isTouchPressed: boolean = false;
+  private lockTriggeredInCurrentTouch: boolean = false;
+  private longPressTimerId: number = -1;
+  private focusHintTimerId: number = -1;
+  private focusLockAnimTimerId: number = -1;
+  private static readonly LOCK_FADE_IN_DURATION_MS: number = 300;
+  private static readonly LOCK_MOVE_DURATION_MS: number = 500;
+  private static readonly LOCK_ANIM_DURATION_MS: number =
+    CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS + CameraPreviewComponent.LOCK_MOVE_DURATION_MS;
+  private static readonly LOCK_ANIM_INTERVAL_MS: number = 16;
+  private static readonly FOCUS_RING_DIAMETER: number = 60;
+  private static readonly FOCUS_RING_RADIUS: number = CameraPreviewComponent.FOCUS_RING_DIAMETER / 2;
+  private static readonly FOCUS_RING_STROKE: number = 1;
+  private static readonly LOCK_ICON_SIZE: number = 24;
+  private static readonly LOCK_TARGET_INSET_LEFT: number = 17;
+  private static readonly LOCK_TARGET_INSET_TOP: number = 20;
   @Prop flutterMLKitScannerView: MLKitScannerView | null = null;
   @State canRenderCamera: boolean = false;
   private hasPermission: boolean = false;
@@ -49,8 +72,14 @@ export struct CameraPreviewComponent {
   @State offsetY: number = 0;
   // 裁剪矩形状态
   @State cropRectState: CropRect | null = null;
+  @State hostWidthState: number = 0;
+  @State hostHeightState: number = 0;
   //  扫描仪是否处于活动状态（改变覆盖边框颜色）
   @State isActive: boolean = false;
+  @State focusPointState: TouchPoint | null = null;
+  @State showFocusState: boolean = false;
+  @State isFocusLockedState: boolean = false;
+  @State focusLockAnimProgressState: number = 1;
 
   build() {
     Stack() {
@@ -88,6 +117,36 @@ export struct CameraPreviewComponent {
               this.isActive,
             )
         }
+
+        if (this.shouldShowFocusRing()) {
+          Stack() {
+          }
+            .width(CameraPreviewComponent.FOCUS_RING_DIAMETER)
+            .height(CameraPreviewComponent.FOCUS_RING_DIAMETER)
+            .border({
+              width: CameraPreviewComponent.FOCUS_RING_STROKE,
+              color: Color.White,
+            })
+            .opacity(0.6)
+            .borderRadius(CameraPreviewComponent.FOCUS_RING_RADIUS)
+            .position({
+              x: this.getFocusRingLeft(),
+              y: this.getFocusRingTop(),
+            })
+        }
+
+        if (this.hasLockVisualState()) {
+          Image($r('app.media.lock_fill'))
+            .align(Alignment.TopStart)
+            .width(CameraPreviewComponent.LOCK_ICON_SIZE)
+            .height(CameraPreviewComponent.LOCK_ICON_SIZE)
+            .opacity(this.getLockOpacity())
+            .position({
+              x: this.getLockLeft(),
+              y: this.getLockTop(),
+            })
+            .draggable(false)
+        }
       }
     }
     .alignContent(Alignment.Center)
@@ -101,9 +160,103 @@ export struct CameraPreviewComponent {
       void oldValue;
       const dims: Size = readOnAreaChangeSize(newValue);
       if (dims.width > 0 && dims.height > 0) {
+        this.hostWidthState = dims.width;
+        this.hostHeightState = dims.height;
         getCurrentMLKitScannerView()?.onPreviewHostAreaChange(dims.width, dims.height);
       }
     })
+  }
+
+  private getFocusCenter(): TouchPoint | null {
+    if (this.cameraWidth <= 0 || this.cameraHeight <= 0) {
+      return null;
+    }
+    return {
+      x: this.offsetX + this.cameraWidth / 2,
+      y: this.offsetY + this.cameraHeight / 2,
+    };
+  }
+
+  private getVisiblePreviewLeft(): number {
+    return Math.max(0, this.offsetX);
+  }
+
+  private getVisiblePreviewTop(): number {
+    return Math.max(0, this.offsetY);
+  }
+
+  private getLockVisualState(): LockVisualState | null {
+    if (!this.showFocusState || !this.isFocusLockedState) {
+      return null;
+    }
+    const focusCenter = this.getFocusCenter();
+    if (!focusCenter) {
+      return null;
+    }
+
+    const progress = Math.max(0, Math.min(1, this.focusLockAnimProgressState)); // 将动画总进度限制在 0 到 1 之间
+    const fadeProgress = Math.max( // 计算锁图标淡入阶段的透明度进度
+      0, // 透明度下限为 0
+      Math.min(1, progress * CameraPreviewComponent.LOCK_ANIM_DURATION_MS / // 将总进度映射到淡入阶段的时间轴
+        CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS), // 以淡入时长归一化得到淡入进度
+    ); // 得到最终的淡入透明度
+    const movePhaseElapsed = Math.max( // 计算位移动画阶段已经消耗的时间
+      0, // 位移阶段已消耗时间不允许小于 0
+      progress * CameraPreviewComponent.LOCK_ANIM_DURATION_MS - CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS, // 总耗时减去淡入阶段耗时后得到位移阶段耗时
+    ); // 得到位移阶段已运行的实际时长
+    const moveProgress = Math.max( // 计算位移动画的归一化进度
+      0, // 位移进度下限为 0
+      Math.min(1, movePhaseElapsed / CameraPreviewComponent.LOCK_MOVE_DURATION_MS), // 按位移总时长归一化并限制在 0 到 1 之间
+    ); // 得到位移动画的标准化进度
+    const easedMove = 1 - Math.pow(1 - moveProgress, 3); // 使用 ease-out 曲线让移动末端更平滑
+    const iconHalf = CameraPreviewComponent.LOCK_ICON_SIZE / 2; // 计算锁图标一半尺寸用于垂直居中对齐
+    const startLeft = focusCenter.x - CameraPreviewComponent.FOCUS_RING_RADIUS - CameraPreviewComponent.LOCK_ICON_SIZE; // 锁图标起点位于焦圈正左侧
+    const startTop = focusCenter.y - iconHalf; // 锁图标起点在纵向上与焦圈中心对齐
+    const endLeft = this.getVisiblePreviewLeft() + CameraPreviewComponent.LOCK_TARGET_INSET_LEFT; // 锁图标终点横坐标位于可见预览区域左侧内缩位置
+    const endTop = this.getVisiblePreviewTop() + CameraPreviewComponent.LOCK_TARGET_INSET_TOP; // 锁图标终点纵坐标位于可见预览区域顶部内缩位置
+
+    return {
+      left: startLeft + (endLeft - startLeft) * easedMove,
+      top: startTop + (endTop - startTop) * easedMove,
+      opacity: fadeProgress,
+    };
+  }
+
+  private hasLockVisualState(): boolean {
+    return this.getLockVisualState() !== null;
+  }
+
+  private getLockLeft(): number {
+    const state = this.getLockVisualState();
+    return state ? state.left : 0;
+  }
+
+  private getLockTop(): number {
+    const state = this.getLockVisualState();
+    return state ? state.top : 0;
+  }
+
+  private getLockOpacity(): number {
+    const state = this.getLockVisualState();
+    return state ? state.opacity : 0;
+  }
+
+  private shouldHideFocusRing(): boolean {
+    return this.isFocusLockedState && this.focusLockAnimProgressState >= 0.999;
+  }
+
+  private shouldShowFocusRing(): boolean {
+    return this.showFocusState && !this.shouldHideFocusRing() && this.getFocusCenter() !== null;
+  }
+
+  private getFocusRingLeft(): number {
+    const center = this.getFocusCenter();
+    return center ? center.x - CameraPreviewComponent.FOCUS_RING_RADIUS : 0;
+  }
+
+  private getFocusRingTop(): number {
+    const center = this.getFocusCenter();
+    return center ? center.y - CameraPreviewComponent.FOCUS_RING_RADIUS : 0;
   }
 
   private handleFocusTouch(eventObj: TouchEvent): void {
@@ -114,37 +267,138 @@ export struct CameraPreviewComponent {
     const rawPoint = readTouchPoint(eventObj);
     const point = rawPoint ? this.toPreviewPoint(rawPoint) : null;
 
-    // DOWN 事件时记录触点位置和时间，UP 事件时根据持续时间判断是否为长按
+    // DOWN 事件时启动长按计时，满 500ms 立即触发锁定对焦（不再等待 UP）
     if (touchType === this.TOUCH_TYPE_DOWN && point) {
       this.touchDownAtMs = Date.now();
       this.touchDownX = point.x;
       this.touchDownY = point.y;
+      this.isTouchPressed = true;
+      this.lockTriggeredInCurrentTouch = false;
+      this.startLongPressTimer();
       return;
     }
 
-    // 仅在 UP 事件时处理对焦，长按超过阈值则锁定焦点
+    // UP：如果长按已触发，则只结束本次触摸；否则按轻触对焦处理
     if (touchType === this.TOUCH_TYPE_UP) {
-      if (this.touchDownAtMs < 0) {
+      if (!this.isTouchPressed || this.touchDownAtMs < 0) {
         return;
       }
-      const duration = Date.now() - this.touchDownAtMs;
-      const needLock = duration >= this.LONG_PRESS_THRESHOLD_MS;
+      this.clearLongPressTimer();
+      this.isTouchPressed = false;
       const focusX = this.touchDownX;
       const focusY = this.touchDownY;
       this.touchDownAtMs = -1;
-      Log.w(TAG, `Focus touch at (${focusX}, ${focusY}), duration=${duration}ms, needLock=${needLock}`);
+
+      if (this.lockTriggeredInCurrentTouch) {
+        return;
+      }
+
+      this.updateFocusHint(false);
+      Log.w(TAG, `Focus touch at (${focusX}, ${focusY}), needLock=false`);
       this.flutterMLKitScannerView.handleUserFocusGesture(
         focusX,
         focusY,
         this.cameraWidth,
         this.cameraHeight,
-        needLock,
+        false,
       );
       return;
     }
 
     if (touchType === this.TOUCH_TYPE_CANCEL) {
+      this.clearLongPressTimer();
+      this.isTouchPressed = false;
+      this.lockTriggeredInCurrentTouch = false;
       this.touchDownAtMs = -1;
+    }
+  }
+
+  private clearLongPressTimer(): void {
+    if (this.longPressTimerId >= 0) {
+      clearTimeout(this.longPressTimerId);
+      this.longPressTimerId = -1;
+    }
+  }
+
+  private startLongPressTimer(): void {
+    this.clearLongPressTimer();
+    this.longPressTimerId = setTimeout(() => {
+      this.longPressTimerId = -1;
+      if (!this.isTouchPressed || this.lockTriggeredInCurrentTouch || this.touchDownAtMs < 0) {
+        return;
+      }
+
+      this.lockTriggeredInCurrentTouch = true;
+      const focusX = this.touchDownX;
+      const focusY = this.touchDownY;
+      this.updateFocusHint(true);
+      Log.w(TAG, `Focus touch at (${focusX}, ${focusY}), needLock=true`);
+      this.flutterMLKitScannerView?.handleUserFocusGesture(
+        focusX,
+        focusY,
+        this.cameraWidth,
+        this.cameraHeight,
+        true,
+      );
+    }, this.LONG_PRESS_THRESHOLD_MS) as number;
+  }
+
+  private clearFocusHintTimer(): void {
+    if (this.focusHintTimerId >= 0) {
+      clearTimeout(this.focusHintTimerId);
+      this.focusHintTimerId = -1;
+    }
+  }
+
+  private clearFocusLockAnimTimer(): void {
+    if (this.focusLockAnimTimerId >= 0) {
+      clearInterval(this.focusLockAnimTimerId);
+      this.focusLockAnimTimerId = -1;
+    }
+  }
+
+  private startFocusLockAnim(): void {
+    this.clearFocusLockAnimTimer();
+    this.focusLockAnimProgressState = 0;
+    const startAt = Date.now();
+    this.focusLockAnimTimerId = setInterval(() => {
+      const elapsed = Date.now() - startAt;
+      const raw = elapsed / CameraPreviewComponent.LOCK_ANIM_DURATION_MS;
+      const clamped = Math.max(0, Math.min(1, raw));
+      this.focusLockAnimProgressState = clamped;
+      if (clamped >= 1) {
+        this.clearFocusLockAnimTimer();
+      }
+    }, CameraPreviewComponent.LOCK_ANIM_INTERVAL_MS) as number;
+  }
+
+  private updateFocusHint(needLock: boolean): void {
+    this.clearFocusHintTimer();
+    const centerPoint: TouchPoint = {
+      x: this.offsetX + this.cameraWidth / 2,
+      y: this.offsetY + this.cameraHeight / 2,
+    };
+    this.focusPointState = {
+      x: centerPoint.x,
+      y: centerPoint.y,
+    };
+    this.showFocusState = true;
+    this.isFocusLockedState = needLock;
+    if (needLock) {
+      this.startFocusLockAnim();
+    } else {
+      this.clearFocusLockAnimTimer();
+      this.focusLockAnimProgressState = 1;
+    }
+
+    // 轻触仅短暂显示对焦圈；长按锁定时保持显示，直到下一次轻触触发。
+    if (!needLock) {
+      this.focusHintTimerId = setTimeout(() => {
+        this.showFocusState = false;
+        this.isFocusLockedState = false;
+        this.focusLockAnimProgressState = 1;
+        this.focusHintTimerId = -1;
+      }, 900) as number;
     }
   }
 
@@ -197,6 +451,9 @@ export struct CameraPreviewComponent {
   aboutToDisappear() {
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
+    this.clearLongPressTimer();
+    this.clearFocusHintTimer();
+    this.clearFocusLockAnimTimer();
     this.unRegisterLifecycle();
   }
 

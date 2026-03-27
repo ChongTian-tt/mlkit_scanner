@@ -45,6 +45,7 @@ export class CameraService {
   private readonly setSharedFlashStatus: (status: boolean) => void;
   // 图像接收器，用于接收相机预览帧并进行扫码解码
   public imageReceiver: image.ImageReceiver;
+  private isImageReceiverReleased: boolean = false;
 
   constructor(
     context: Context,
@@ -237,10 +238,43 @@ export class CameraService {
       // 设置连续自动对焦模式
       this.setFocusMode(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO);
       this.isStop = false;
+      this.isImageReceiverReleased = false;
       return true;
     } catch (error) {
       Log.e(TAG, 'initCamera failed: ' + JSON.stringify(error));
       return false;
+    }
+  }
+
+  private clearSessionRefs(): void {
+    this.photoSession = null;
+    this.cameraInput = undefined;
+    this.previewOutput = undefined;
+    this.curcamerasDevice = undefined;
+  }
+
+  private async releaseSessionResources(): Promise<void> {
+    const session = this.photoSession;
+    const input = this.cameraInput;
+    const preview = this.previewOutput;
+    this.clearSessionRefs();
+
+    try {
+      await session?.release();
+    } catch (error) {
+      Log.w(TAG, 'releaseSessionResources session skipped: ' + JSON.stringify(error));
+    }
+
+    try {
+      await input?.close();
+    } catch (error) {
+      Log.w(TAG, 'releaseSessionResources input skipped: ' + JSON.stringify(error));
+    }
+
+    try {
+      await preview?.release();
+    } catch (error) {
+      Log.w(TAG, 'releaseSessionResources preview skipped: ' + JSON.stringify(error));
     }
   }
 
@@ -310,8 +344,8 @@ export class CameraService {
       const targetMode = needLock
         // 对焦锁定 
         ? camera.FocusMode.FOCUS_MODE_LOCKED
-        // 连续自动对焦
-        : camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO;
+        // 自动对焦
+        : camera.FocusMode.FOCUS_MODE_AUTO;
       if (this.photoSession.isFocusModeSupported(targetMode)) {
         this.photoSession.setFocusMode(targetMode);
         Log.w(TAG, `setFocusMode ${JSON.stringify(targetMode)}`);
@@ -453,14 +487,8 @@ export class CameraService {
   async preFrontRelease(isStop: boolean): Promise<void> {
     this.isStop = isStop;
     try {
-      if (!this.isStop) {
-        await this.photoSession?.stop();
-        this.isStop = true;
-      }
       // 释放会话资源，通过注册回调函数获取结果
-      await this.photoSession?.release();
-      await this.cameraInput?.close();
-      await this.previewOutput?.release();
+      await this.releaseSessionResources();
     } catch (error) {
       Log.e(TAG, 'preFrontRelease failed: ' + JSON.stringify(error));
     }
@@ -468,16 +496,14 @@ export class CameraService {
 
   async releaseCamera(): Promise<void> {
     try {
-      if (!this.isStop) {
-        await this.photoSession?.stop();
-        this.isStop = true;
+      this.isStop = true;
+      await this.releaseSessionResources();
+      if (!this.isImageReceiverReleased) {
+        this.isImageReceiverReleased = true;
+        await this.imageReceiver.release();
       }
-      await this.cameraInput?.close();
-      await this.previewOutput?.release();
-      await this.photoSession?.release();
-      await this.imageReceiver.release();
     } catch (error) {
-      Log.e(TAG, 'releaseCamera failed: ' + JSON.stringify(error));
+      Log.w(TAG, 'releaseCamera skipped: ' + JSON.stringify(error));
     }
   }
 

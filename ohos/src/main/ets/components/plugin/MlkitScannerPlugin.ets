@@ -50,6 +50,6 @@ export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
   }
 
   onDetachedFromAbility(): void {
-    Log.i(TAG, 'onDetachedFromAbility');
+    this.pluginBinding = null;
   }
 }

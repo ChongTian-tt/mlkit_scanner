@@ -76,6 +76,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private lastHostLayoutW: number = 0;
   private lastHostLayoutH: number = 0;
   private disposePromise: Promise<void> | null = null;
+  private isDisposed: boolean = false;
   private scanDelayTimerId: number = -1;
   private isDelayed: boolean = false;
   private yuvFrameHeight: number = 0;
@@ -691,43 +692,65 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private async runDisposeScanRelease(): Promise<void> {
+    const service = this.cameraService;
+    this.cameraService = null;
+    if (!service) {
+      return;
+    }
+
     try {
-      const service = this.getCameraService();
-      await service?.releaseCamera();
+      await service.releaseCamera();
     } catch (error) {
-      Log.w(TAG, 'disposeScanResources release skipped: ' + JSON.stringify(error));
+      Log.w(TAG, 'runDisposeScanRelease release skipped: ' + JSON.stringify(error));
     }
   }
 
   private resetStateAfterDispose(): void {
     // 保底状态清理，避免重复进入销毁流程后状态残留
     this.clearScanDelayTimer();
+    this.originalValue = '';
+    this.surfaceId = '';
     this.isCameraInitialized = false;
     this.endScanSession();
     this.endPreviewSession();
     this.desiredZoom = null;
+    this.flashLightStatus = false;
     this.flashLightStatusBeforePause = false;
     this.previewState.isPausedByUser = false;
+    this.isFrameListenerBound = false;
+    this.isPreviewStarting = false;
+    this.methodResult = null;
   }
 
   private async disposeScanResources(): Promise<void> {
-    if (!this.disposePromise) {
-      this.disposePromise = this.runDisposeScanRelease();
+    if (this.disposePromise) {
+      await this.disposePromise;
+      return;
     }
+
+    this.isDisposed = true;
+    this.disposePromise = (async () => {
+      this.resetStateAfterDispose();
+      await this.runDisposeScanRelease();
+    })();
 
     try {
       await this.disposePromise;
     } finally {
-      this.resetStateAfterDispose();
+      this.disposePromise = null;
+    }
+  }
+
+  private detachChannelHandler(): void {
+    if (this.channel != null) {
+      this.channel.setMethodCallHandler(null);
     }
   }
 
   private async disposeHandle(result: MethodResult): Promise<void> {
     try {
       await this.disposeScanResources();
-      if (this.channel != null) {
-        this.channel.setMethodCallHandler(null);
-      }
+      this.detachChannelHandler();
       result.success(true);
     } catch (error) {
       Log.e(TAG, `Failed to disposeHandle. Code: ${error.code}, message: ${error.message}`);
@@ -1171,10 +1194,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   dispose() {
+    this.isDisposed = true;
     void this.disposeScanResources();
-    if (this.channel != null) {
-      this.channel.setMethodCallHandler(null);
-    }
+    this.detachChannelHandler();
   }
 }
 
