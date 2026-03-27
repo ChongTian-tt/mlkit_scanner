@@ -130,6 +130,7 @@ export class CameraService {
     return this.camerasDevices[0];
   }
 
+  // 给定 CameraDevice，从 getSupportedOutputCapability 查找首选预览 Profile
   private getPreferredPreviewProfile(device: camera.CameraDevice): camera.Profile | undefined {
     const cachedProfile = this.preferredPreviewProfileCache[device.cameraId];
     if (cachedProfile) {
@@ -159,7 +160,7 @@ export class CameraService {
         this.preferredPreviewProfileCache[device.cameraId] = preferred;
         return preferred;
       }
-
+      // 没有找到完全匹配的预览配置，按尺寸从大到小排序，选择最大的那个作为 fallback
       const sorted = [...previewProfiles].sort((a: camera.Profile, b: camera.Profile) => {
         return (b.size.width * b.size.height) - (a.size.width * a.size.height);
       });
@@ -173,7 +174,7 @@ export class CameraService {
     }
   }
 
-  // 外部调用以获取预览尺寸时，返回当前预览配置的尺寸，供 MLKitScannerView 计算扫码框遮罩等布局逻辑使用。
+  // 外部入口，通过 cameraId 查找相机设备 → 获取 Profile → 返回 Size
   public getPreferredPreviewSize(cameraId?: string): Size | null {
     const cacheKey = this.getPreviewProfileCacheKey(cameraId);
     const cachedProfile = this.preferredPreviewProfileCache[cacheKey];
@@ -195,8 +196,7 @@ export class CameraService {
       width: profile.size.width,
       height: profile.size.height,
     };
-    this.preferredPreviewProfileCache[device.cameraId] = profile;
-    this.preferredPreviewProfileCache[cacheKey] = profile;
+
     return resolvedSize;
   }
 
@@ -338,10 +338,6 @@ export class CameraService {
       // 设置连续自动对焦模式
       this.setFocusMode(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO);
       this.isStop = false;
-      this.previewProfileSize = {
-        width: previewProfile.size.width,
-        height: previewProfile.size.height,
-      };
       return true;
     } catch (error) {
       Log.e(TAG, 'initCamera failed: ' + JSON.stringify(error));

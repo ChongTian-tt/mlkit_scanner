@@ -86,6 +86,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     width: MLKitScannerView.PREVIEW_RATIO_W,
     height: MLKitScannerView.PREVIEW_RATIO_H,
   };
+  // 帧监听是否已绑定到当前 ImageReceiver，initCamera 后会重置该标志以确保正确绑定
   private isFrameListenerBound: boolean = false;
   private isPreviewStarting: boolean = false;
 
@@ -99,8 +100,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     this.previewSize = this.parsePreviewSize(args);
     this.cameraService = this.createCameraService();
-    this.refreshPreviewSourceSize();
-    this.previewSize = this.calcPreviewSizeAspectCover(this.containerSize.width, this.containerSize.height);
   }
 
   private createCameraService(): CameraService | null {
@@ -1060,8 +1059,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     // 非用户触发pause后前后台切换
     if (!this.previewState.isPausedByUser) {
       try {
-        // const service = this.getCameraService();
-        // await service?.preFrontRelease(false);
         this.originalValue = '';
         await this.startPreview();
         this.applyDesiredZoomIfPossible();
@@ -1233,8 +1230,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     this.selectedCameraPositionCode = reqPosition;
     this.selectedCameraTypeCode = reqType;
-    this.refreshPreviewSourceSize();
-    this.applyPreviewContainerSize(this.containerSize.width, this.containerSize.height);
     getCurrentCameraPreviewComponent()?.applyCropRect();
 
     if (this.isCameraInitialized && this.surfaceId && !this.previewState.isPausedByUser) {

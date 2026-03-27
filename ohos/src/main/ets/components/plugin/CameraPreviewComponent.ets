@@ -54,8 +54,8 @@ export struct CameraPreviewComponent {
   // 锁定动画总时长，确保在动画过程中正确计算锁定图标的透明度和位置
   private static readonly LOCK_ANIM_DURATION_MS: number =
     CameraPreviewComponent.LOCK_FADE_IN_DURATION_MS + CameraPreviewComponent.LOCK_MOVE_DURATION_MS;
-  // 锁定动画更新间隔，通常设置为 16ms 以实现约 60fps 的动画效果，确保动画平滑且性能可控
-  private static readonly LOCK_ANIM_INTERVAL_MS: number = 16;
+  // 锁定动画更新间隔，30fps 对锁定图标位移动画足够平滑，同时减少 @State 刷新次数
+  private static readonly LOCK_ANIM_INTERVAL_MS: number = 32;
   // 对焦环和锁定图标的尺寸和位置参数
   private static readonly FOCUS_RING_DIAMETER: number = 60;
   // 对焦环半径
@@ -86,6 +86,8 @@ export struct CameraPreviewComponent {
   @State isFocusLockedState: boolean = false;
   // 锁定动画进度（0-1）
   @State focusLockAnimProgressState: number = 1;
+  // 锁定图标视觉状态缓存，避免 build 中多次重复计算 getLockVisualState()
+  @State lockVisualCache: LockVisualState | null = null;
 
   build() {
     Stack() {
@@ -140,16 +142,16 @@ export struct CameraPreviewComponent {
               y: this.getFocusRingTop(),
             })
         }
-        // 锁定图标
-        if (this.hasLockVisualState()) {
+        // 锁定图标（直接读取缓存，不再重复计算）
+        if (this.lockVisualCache) {
           Image($r('app.media.lock_fill'))
             .align(Alignment.TopStart)
             .width(CameraPreviewComponent.LOCK_ICON_SIZE)
             .height(CameraPreviewComponent.LOCK_ICON_SIZE)
-            .opacity(this.getLockOpacity())
+            .opacity(this.lockVisualCache.opacity)
             .position({
-              x: this.getLockLeft(),
-              y: this.getLockTop(),
+              x: this.lockVisualCache.left,
+              y: this.lockVisualCache.top,
             })
             .draggable(false)
         }
@@ -240,23 +242,19 @@ export struct CameraPreviewComponent {
     };
   }
 
-  private hasLockVisualState(): boolean {
-    return this.getLockVisualState() !== null;
-  }
-
-  private getLockLeft(): number {
-    const state = this.getLockVisualState();
-    return state ? state.left : 0;
-  }
-
-  private getLockTop(): number {
-    const state = this.getLockVisualState();
-    return state ? state.top : 0;
-  }
-
-  private getLockOpacity(): number {
-    const state = this.getLockVisualState();
-    return state ? state.opacity : 0;
+  // 刷新锁定图标视觉缓存，仅在值实际变化时写入 @State 以减少不必要的 re-render
+  private refreshLockVisualCache(): void {
+    const next = this.getLockVisualState();
+    const prev = this.lockVisualCache;
+    if (!next && !prev) {
+      return;
+    }
+    if (!next || !prev ||
+      Math.abs(next.left - prev.left) > 0.5 ||
+      Math.abs(next.top - prev.top) > 0.5 ||
+      Math.abs(next.opacity - prev.opacity) > 0.01) {
+      this.lockVisualCache = next;
+    }
   }
 
   // 当锁定动画完成后，持续显示锁定图标直到下一次对焦操作触发
@@ -382,12 +380,15 @@ export struct CameraPreviewComponent {
   private startFocusLockAnim(): void {
     this.clearFocusLockAnimTimer();
     this.focusLockAnimProgressState = 0;
+    this.refreshLockVisualCache();
     const startAt = Date.now();
     this.focusLockAnimTimerId = setInterval(() => {
       const elapsed = Date.now() - startAt;
       const raw = elapsed / CameraPreviewComponent.LOCK_ANIM_DURATION_MS;
       const clamped = Math.max(0, Math.min(1, raw));
       this.focusLockAnimProgressState = clamped;
+      // 通过缓存 diff 决定是否真正触发 @State 刷新
+      this.refreshLockVisualCache();
       if (clamped >= 1) {
         this.clearFocusLockAnimTimer();
       }
@@ -404,6 +405,7 @@ export struct CameraPreviewComponent {
     } else {
       this.clearFocusLockAnimTimer();
       this.focusLockAnimProgressState = 1;
+      this.lockVisualCache = null;
     }
 
     // 如果是轻触触发的对焦，则 900ms 后自动隐藏提示和重置锁定状态
@@ -412,6 +414,7 @@ export struct CameraPreviewComponent {
         this.showFocusState = false;
         this.isFocusLockedState = false;
         this.focusLockAnimProgressState = 1;
+        this.lockVisualCache = null;
         this.focusHintTimerId = -1;
       }, 900) as number;
     }
