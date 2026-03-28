@@ -98,9 +98,3 @@ export interface TouchRecord {
   x?: Object;
   y?: Object;
 }
-
-export interface LockVisualState {
-  left: number;
-  top: number;
-  opacity: number;
-}

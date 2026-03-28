@@ -213,6 +213,8 @@ class _MyAppState extends State<MyApp> {
                       "Tap to focus on Center / LongTap to lock focus",
                       style: TextStyle(
                         color: Colors.white,
+                        fontSize: 13,
+                        height: 1,
                       ),
                     ),
                   ),
