@@ -18,17 +18,12 @@ import { camera } from '@kit.CameraKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { Log, MethodResult } from '@ohos/flutter_ohos';
 import { detectBarcode, scanBarcode, scanCore } from '@kit.ScanKit';
-import { Size } from './PluginConstants';
+import { PluginConstants, Size } from './PluginConstants';
 
 const TAG = '[CameraService]:';
 
 export class CameraService {
-  private static readonly DEFAULT_PREVIEW_WIDTH: number = 1920;
-  private static readonly DEFAULT_PREVIEW_HEIGHT: number = 1080;
-  private static readonly DEFAULT_CAMERA_CACHE_KEY: string = '__default__';
   public cameraManager: camera.CameraManager | undefined = undefined;
-  // 相机缓存，避免频繁调用 getSupportedCameras 导致性能问题
-  private static readonly CAMERA_CACHE_TTL_MS: number = 3000;
   private camerasLoadedAtMs: number = 0;
   private camerasDevices: Array<camera.CameraDevice> = [];
   // 当前使用的相机设备
@@ -53,8 +48,8 @@ export class CameraService {
   private isImageReceiverReleased: boolean = false;
   // 当前预览配置的尺寸，单位是像素。初始值为默认预览尺寸，后续会根据实际相机 profile 更新。
   private previewProfileSize: Size = {
-    width: CameraService.DEFAULT_PREVIEW_WIDTH,
-    height: CameraService.DEFAULT_PREVIEW_HEIGHT,
+    width: PluginConstants.DEFAULT_PREVIEW_WIDTH,
+    height: PluginConstants.DEFAULT_PREVIEW_HEIGHT,
   };
   private preferredPreviewProfileCache: Record<string, camera.Profile> = {};
 
@@ -111,7 +106,7 @@ export class CameraService {
     if (cameraId && cameraId.length > 0) {
       return cameraId;
     }
-    return CameraService.DEFAULT_CAMERA_CACHE_KEY;
+    return PluginConstants.DEFAULT_CAMERA_CACHE_KEY;
   }
 
   private resolveCameraDevice(cameraId?: string): camera.CameraDevice | undefined {
@@ -149,8 +144,8 @@ export class CameraService {
 
       const preferred = previewProfiles.find((profile: camera.Profile) => {
         return (
-          profile.size.width === CameraService.DEFAULT_PREVIEW_WIDTH &&
-          profile.size.height === CameraService.DEFAULT_PREVIEW_HEIGHT
+          profile.size.width === PluginConstants.DEFAULT_PREVIEW_WIDTH &&
+          profile.size.height === PluginConstants.DEFAULT_PREVIEW_HEIGHT
         );
       });
       if (preferred) {
@@ -205,7 +200,7 @@ export class CameraService {
     const useCache =
       this.cameraManager !== undefined &&
         this.camerasDevices.length > 0 &&
-        now - this.camerasLoadedAtMs < CameraService.CAMERA_CACHE_TTL_MS;
+        now - this.camerasLoadedAtMs < PluginConstants.CAMERA_CACHE_TTL_MS;
     if (useCache) {
       return true;
     }
@@ -417,8 +412,8 @@ export class CameraService {
 
   /**
    * 轻触/长按触发对焦。
-   * needLock=true：切到自动对焦模式，模拟“锁定当前对焦点”。
-   * needLock=false：切回连续自动对焦。
+   * needLock=true：切到对焦锁定
+   * needLock=false：切回自动对焦
    */
   focusAtPreviewPoint(
     x: number,

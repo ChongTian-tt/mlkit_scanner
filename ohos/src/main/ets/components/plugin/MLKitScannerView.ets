@@ -62,29 +62,31 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private containerSize: Size = { width: 0, height: 0 };
   // 扫描延迟，单位是毫秒
   private scanDelayMs: number = 100;
-  // 预览尺寸的默认比例。初始化早期在尚未拿到真实相机 profile 前，先使用该比例占位。
-  private static readonly PREVIEW_RATIO_W: number = 9;
-  private static readonly PREVIEW_RATIO_H: number = 16;
   private previewState: PreviewState = {
     isRunning: false, // 预览流是否开启
     isPausedByUser: false, // 是否是用户暂停
   };
+  // 用户期望的缩放级别，可能在预览未就绪时设置，预览就绪后会应用
   private desiredZoom: number | null = null;
+  // 当前使用的摄像头参数
   private lastHostLayoutW: number = 0;
   private lastHostLayoutH: number = 0;
   private disposePromise: Promise<void> | null = null;
-  private isDisposed: boolean = false;
+  // 扫描延迟定时器 ID，用于控制扫描结果的节流输出
   private scanDelayTimerId: number = -1;
+  // 扫码结果节流标志，true 表示当前在延迟窗口期间，扫码结果应被忽略
   private isDelayed: boolean = false;
+  // yuv帧的高度，用于坐标转换
   private yuvFrameHeight: number = 0;
+  // 当前选中的摄像头参数
   private selectedCameraPositionCode: number = 1;
   private selectedCameraTypeCode: number = 0;
   private selectedCameraId: string = '';
   private cameraService: CameraService | null = null;
   // 预览源尺寸宽高比
   private previewSourceSize: Size = {
-    width: MLKitScannerView.PREVIEW_RATIO_W,
-    height: MLKitScannerView.PREVIEW_RATIO_H,
+    width: PluginConstants.PREVIEW_RATIO_W,
+    height: PluginConstants.PREVIEW_RATIO_H,
   };
   // 帧监听是否已绑定到当前 ImageReceiver，initCamera 后会重置该标志以确保正确绑定
   private isFrameListenerBound: boolean = false;
@@ -174,6 +176,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return null;
   }
 
+  // 中心区域扫码框，作为扫码结果坐标缺失时的兜底方案
   private fallbackCenterRect(): ScanRectLike {
     const w = this.previewSize.width > 0 ? this.previewSize.width : this.containerSize.width;
     const h = this.previewSize.height > 0 ? this.previewSize.height : this.containerSize.height;
@@ -204,25 +207,32 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       this.yuvFrameHeight = Math.round(frameHeight);
     }
     const rectLikeRaw = this.extractScanRect(result);
-    const rectLike = rectLikeRaw ?? this.fallbackCenterRect();
-    const scanRect: scanBarcode.ScanCodeRect = {
-      left: Math.round(rectLike.left),
-      top: Math.round(rectLike.top),
-      right: Math.round(rectLike.right),
-      bottom: Math.round(rectLike.bottom),
-    };
-    const matchedByRawRect = rectLikeRaw ? this.checkResultInScanBox(scanRect) : false;
-    const convertedScanRect = rectLikeRaw ? this.convertYuvToScreenCoords(scanRect) : scanRect;
-    const matchedByConvertedRect = rectLikeRaw ? this.checkResultInScanBox(convertedScanRect) : false;
-    const fallbackRect = this.fallbackCenterRect();
-    const matchedByFallback = !rectLikeRaw && this.checkResultInScanBox({
-      left: Math.round(fallbackRect.left),
-      top: Math.round(fallbackRect.top),
-      right: Math.round(fallbackRect.right),
-      bottom: Math.round(fallbackRect.bottom),
-    });
-
-    if (matchedByRawRect || matchedByConvertedRect || matchedByFallback) {
+    const candidates: scanBarcode.ScanCodeRect[] = [];
+    if (rectLikeRaw) {
+      // 原始扫码结果坐标
+      const scanRect: scanBarcode.ScanCodeRect = {
+        left: Math.round(rectLikeRaw.left),
+        top: Math.round(rectLikeRaw.top),
+        right: Math.round(rectLikeRaw.right),
+        bottom: Math.round(rectLikeRaw.bottom),
+      };
+      candidates.push(scanRect);
+      // 转换为屏幕坐标
+      const convertedScanRect = this.convertYuvToScreenCoords(scanRect);
+      candidates.push(convertedScanRect);
+    } else {
+      // 没有扫码结果坐标时，使用兜底中心区域
+      const fallbackRect = this.fallbackCenterRect();
+      candidates.push({
+        left: Math.round(fallbackRect.left),
+        top: Math.round(fallbackRect.top),
+        right: Math.round(fallbackRect.right),
+        bottom: Math.round(fallbackRect.bottom),
+      });
+    }
+    // 只要有一个候选区域在扫码框内就判定为命中
+    const matched = candidates.some(rect => this.checkResultInScanBox(rect));
+    if (matched) {
       this.emitScanResult(this.originalValue);
       this.originalValue = '';
       this.startScanDelayWindow();
@@ -454,10 +464,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
     const sourceWidth = this.previewSourceSize.width > 0
       ? this.previewSourceSize.width
-      : MLKitScannerView.PREVIEW_RATIO_W;
+      : PluginConstants.PREVIEW_RATIO_W;
     const sourceHeight = this.previewSourceSize.height > 0
       ? this.previewSourceSize.height
-      : MLKitScannerView.PREVIEW_RATIO_H;
+      : PluginConstants.PREVIEW_RATIO_H;
     const aspect: number = sourceWidth / sourceHeight;
     let width: number;
     let height: number;
@@ -769,7 +779,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
 
-    this.isDisposed = true;
     this.disposePromise = (async () => {
       this.resetStateAfterDispose();
       await this.runDisposeScanRelease();
@@ -1227,7 +1236,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   dispose() {
-    this.isDisposed = true;
     void this.disposeScanResources();
     this.detachChannelHandler();
   }
