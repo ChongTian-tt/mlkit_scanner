@@ -31,7 +31,9 @@ class _MyAppState extends State<MyApp> {
 
   bool get _isIos => defaultTargetPlatform == TargetPlatform.iOS;
 
-  bool get _isOhos => defaultTargetPlatform == TargetPlatform.ohos;
+  // Flutter 官方未内置 TargetPlatform.ohos，需自定义判断
+  static const _ohosPlatformString = 'ohos';
+  bool get _isOhos => defaultTargetPlatform.toString().toLowerCase().contains(_ohosPlatformString);
 
   bool get _supportsCameraSwitch => _isIos || _isOhos;
 
@@ -175,11 +177,11 @@ class _MyAppState extends State<MyApp> {
                 Container(
                   height: 200,
                   child: BarcodeScanner(
-                    initialArguments: (defaultTargetPlatform == TargetPlatform.iOS)
+                    initialArguments: _isIos
                         ? const IosScannerParameters(
                             cropRect: CropRect(scaleHeight: 0.7, scaleWidth: 0.7),
                           )
-                        : (defaultTargetPlatform == TargetPlatform.ohos)
+                        : _isOhos
                         ? const OhosScannerParameters(
                             cropRect: CropRect(scaleHeight: 0.7, scaleWidth: 0.7),
                           )
@@ -205,17 +207,23 @@ class _MyAppState extends State<MyApp> {
                     },
                   ),
                 ),
-                const Align(
+                Align(
                   alignment: Alignment.topCenter,
                   child: Padding(
-                    padding: EdgeInsets.only(top: 8),
+                    padding: _isOhos
+                        ? const EdgeInsets.only(top: 10)
+                        : const EdgeInsets.only(top: 8),
                     child: Text(
                       "Tap to focus on Center / LongTap to lock focus",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        height: 1,
-                      ),
+                      style: _isOhos
+                          ? const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              height: 1.2,
+                            )
+                          : const TextStyle(
+                              color: Colors.white,
+                            ),
                     ),
                   ),
                 )
