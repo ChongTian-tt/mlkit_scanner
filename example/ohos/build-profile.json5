@@ -1,26 +1,12 @@
 {
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "C:\\Users\\hoperun\\.ohos\\config\\default_ohos_CJDWQpyWG7NBDt6MTcz5PrlFgQ0ipItLPEGv4GD4MHY=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001BEF8DD55E54AF5010D07C37E3E81C9599C51263726D5BF2307EB1F10B5FC042B1DF1719A3BF4AEA",
-          "profile": "C:\\Users\\hoperun\\.ohos\\config\\default_ohos_CJDWQpyWG7NBDt6MTcz5PrlFgQ0ipItLPEGv4GD4MHY=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\hoperun\\.ohos\\config\\default_ohos_CJDWQpyWG7NBDt6MTcz5PrlFgQ0ipItLPEGv4GD4MHY=.p12",
-          "storePassword": "0000001BAC8A7549C26444340CFD185FD397FEAC106AEC57168DAC8CA3A1AE288C5753A180F26988D7C584"
-        }
-      }
-    ],
+    "signingConfigs": [],
     "products": [
       {
         "name": "default",
         "signingConfig": "default",
         "compatibleSdkVersion": "5.0.0(12)",
-        "runtimeOS": "HarmonyOS",
+        "runtimeOS": "HarmonyOS"
       }
     ],
     "buildModeSet": [
