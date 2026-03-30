@@ -233,7 +233,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     // 只要有一个候选区域在扫码框内就判定为命中
     const matched = candidates.some(rect => this.checkResultInScanBox(rect));
     if (matched) {
-      this.emitScanResult(this.originalValue);
+      this.emitScanResult(result);
       this.originalValue = '';
       this.startScanDelayWindow();
     }
@@ -550,12 +550,28 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return this.initialScannerParameters?.initialCropRect ?? null;
   }
 
-  private emitScanResult(result: string): void {
+  private extractScanType(result: scanBarcode.ScanResult): number {
+    const resultMap = result as ESObject as Record<string, Object>;
+    const scanType = Number(resultMap['scanType']);
+    if (Number.isFinite(scanType)) {
+      return scanType;
+    }
+
+    const format = Number(resultMap['format']);
+    if (Number.isFinite(format)) {
+      return format;
+    }
+
+    return 0;
+  }
+
+  private emitScanResult(result: scanBarcode.ScanResult): void {
+    const scanType = this.extractScanType(result);
     // 将扫码解析后的结果回传flutter
     this.channel?.invokeMethod(PluginConstants.scanResultMethod, {
-      raw_value: result,
-      display_value: result,
-      format: Number(result['scanType']) || 0,
+      raw_value: result.originalValue,
+      display_value: result.originalValue,
+      format: scanType,
       value_type: 0,
     });
   }
