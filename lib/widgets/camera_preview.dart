@@ -59,6 +59,7 @@ class _CameraPreviewState extends State<CameraPreview> {
             },
           );
         }
+        /// Sets OHOS camera preview
         if (defaultTargetPlatform == TargetPlatform.ohos) {
           return PlatformViewLink(
           viewType: 'mlkit/camera_preview',

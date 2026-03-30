@@ -146,6 +146,7 @@ class _BarcodeScannerState extends State<BarcodeScanner> {
     return _channel.setIosCamera(position: position, type: type);
   }
 
+  /// Sets OHOS cameras with [position] and [type].
   Future<void> _setOhosCamera({
     required OhosCameraPosition position,
     required OhosCameraType type,
@@ -241,7 +242,7 @@ class BarcodeScannerController {
     );
   }
 
-  /// Sets OHOS camera with [position] and [type].
+  /// Sets OHOS cameras with [position] and [type].
   Future<void> setOhosCamera({
     required OhosCameraPosition position,
     required OhosCameraType type,

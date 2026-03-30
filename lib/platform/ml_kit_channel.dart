@@ -170,7 +170,7 @@ class MlKitChannel {
         .toList();
   }
 
-  /// Sets OHOS camera with [position] and [type].
+  /// Sets OHOS cameras with [position] and [type].
   Future<void> setOhosCamera({
     required OhosCameraPosition position,
     required OhosCameraType type,
