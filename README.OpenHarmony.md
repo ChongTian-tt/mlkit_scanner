@@ -54,13 +54,15 @@ class MlkitScannerExample extends StatelessWidget {
 ```
 
 ## 2. Constraints
-1. Flutter: 3.22.0-ohos; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
-2. Flutter: oh-3.27.4-dev; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
+1. Flutter: 3.7.12-ohos-1.0.6; SDK: 5.0.0(12); IDE: DevEco Studio: 5.0.13.200; ROM: 5.1.0.120 SP3;
+2. Flutter: 3.22.0-ohos; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
+3. Flutter: oh-3.27.4-dev; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
+4. Flutter: 3.35.7-ohos-0.0.1; SDK: 6.0.1(21); IDE: DevEco Studio: 6.0.1.260; ROM: 6.0.0.120 SP6;
 
 ## 3. Version and Framework Mapping
 |       | 3.7 | 3.22 | 3.27 | 3.35 |
 |-------|:---:|:----:|:----:|:----:|
-| 1.0.0 |  ❌  |  ✅   |  ✅   |  ❌   |
+| 1.0.0 |  ✅  |  ✅   |  ✅   |  ✅   |
 
 ## 4. API
 
@@ -75,11 +77,14 @@ class MlkitScannerExample extends StatelessWidget {
 | cancelScan | Cancel recognition flow and keep preview | function | None | `Future<void>` | yes |
 | setScanDelay | Set scan polling interval `delay` | function | `delay: int` (milliseconds) | `Future<void>` | yes |
 | onScanResult | Recognition result callback (native -> Dart, triggers `BarcodeScanner.onScan`) | event | `raw_value/display_value/format/value_type` | None (event) | yes |
+| changeTorchStateMethod | Torch state change callback (native -> Dart, drives `torchToggleStream`) | event | `bool` | None (event) | yes |
 | updateConstraints | Update preview constraints (width/height) and re-apply crop area if needed | function | `width: double; height: double` | `Future<void>` | yes |
 | pauseCameraMethod | Pause camera preview (and scanning flow) | function | None | `Future<void>` | yes |
 | resumeCameraMethod | Resume camera preview and scanning flow | function | None | `Future<void>` | yes |
 | setZoom | Set camera zoom. `value` range: `0~1` | function | `value: double` (0~1) | `Future<void>` | yes |
 | setCropAreaMethod | Set recognition crop area (relative to `CameraPreview`) | function | `rect: CropRect` | `Future<void>` | yes |
+| getIosAvailableCameras | Query available OHOS cameras on the current device (the channel name is retained for compatibility) | function | None | `Future<List<OhosCamera>>` | yes |
+| setIosCamera | Switch the OHOS camera by position and type (the channel name is retained for compatibility) | function | `position: OhosCameraPosition; type: OhosCameraType` | `Future<void>` | yes |
 
 ## 5. License
 This project is open source under the [MIT](LICENSE) license.
