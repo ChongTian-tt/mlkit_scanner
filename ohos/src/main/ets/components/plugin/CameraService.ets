@@ -39,6 +39,8 @@ export class CameraService {
   private isStop: boolean = false;
   // 解码节流，避免过于频繁地对预览帧进行解码，导致性能问题和重复结果
   private lastDecodeAtMs: number = 0;
+  // 解码节流间隔（毫秒），由外部通过 setDecodeThrottleMs 注入，默认 800ms
+  private decodeThrottleMs: number = 800;
   // 由外部注入的闪光灯状态读写器（共享 MLKitScannerView 中的状态）
   private readonly getSharedFlashStatus: () => boolean;
   private readonly setSharedFlashStatus: (status: boolean) => void;
@@ -223,17 +225,20 @@ export class CameraService {
   // 获取可用的相机列表
   public getAvailableCameras(): Array<Record<string, number | string>> {
     if (!this.safeLoadCameras()) {
+      Log.w(TAG, 'getAvailableCameras: safeLoadCameras failed, returning empty');
       return [];
     }
 
     const result: Array<Record<string, number | string>> = [];
     for (const device of this.camerasDevices) {
+      Log.i(TAG, `getAvailableCameras: cameraId=${device.cameraId}, position=${device.cameraPosition}, type=${device.cameraType}`);
       result.push({
         'cameraId': device.cameraId,
         'position': device.cameraPosition,
         'type': device.cameraType,
       });
     }
+    Log.i(TAG, `getAvailableCameras: total ${result.length} camera(s) found`);
 
     return result;
   }
@@ -633,7 +638,7 @@ export class CameraService {
     nextImage: image.Image
   ): Promise<void> {
     const now = Date.now();
-    if (now - this.lastDecodeAtMs < 800) {
+    if (now - this.lastDecodeAtMs < this.decodeThrottleMs) {
       await nextImage.release();
       return;
     }
@@ -666,5 +671,10 @@ export class CameraService {
     }).finally(async () => {
       await nextImage.release();
     });
+  }
+
+  // 设置解码节流间隔，与上层 scanDelayMs 对齐，最低 50ms 防止过于频繁解码
+  setDecodeThrottleMs(ms: number): void {
+    this.decodeThrottleMs = Math.max(ms, 50);
   }
 }

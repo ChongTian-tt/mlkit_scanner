@@ -873,6 +873,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
     this.scanDelayMs = options.periodMs;
+    // 同步更新 CameraService 的解码节流间隔，保持底层解码频率与上层扫描延迟一致
+    this.getCameraService()?.setDecodeThrottleMs(this.scanDelayMs);
     if (!this.previewState.isPausedByUser) {
       this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
     }
@@ -950,6 +952,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
     // 将扫描延迟设置为传入值的整数部分
     this.scanDelayMs = Math.trunc(delay);
+    // 同步更新 CameraService 的解码节流间隔，保持底层解码频率与上层扫描延迟一致
+    this.getCameraService()?.setDecodeThrottleMs(this.scanDelayMs);
     result.success(true);
   }
 
@@ -1205,27 +1209,34 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     const args = this.normalizeArgs(call.args as ESObject);
     const position = Number(args['position']);
     const type = Number(args['type']);
+    Log.i(TAG, `setOhosCamera called: position=${position}, type=${type}`);
     if (!Number.isFinite(position) || !Number.isFinite(type)) {
+      Log.e(TAG, `setOhosCamera invalid arguments: position=${position}, type=${type}`);
       result.error(PluginError.InvalidArguments, 'Invalid camera arguments, position/type required', null);
       return;
     }
 
     if (!this.context) {
+      Log.e(TAG, 'setOhosCamera failed: context is undefined');
       result.error(PluginError.InitCameraError, 'context is undefined!', null);
       return;
     }
 
     const reqPosition = Math.trunc(position);
     const reqType = Math.trunc(type);
+    Log.i(TAG, `setOhosCamera requesting: reqPosition=${reqPosition}, reqType=${reqType}`);
     try {
       const service = this.getCameraService();
       if (!service) {
+        Log.e(TAG, 'setOhosCamera failed: camera service is unavailable');
         result.error(PluginError.InitCameraError, 'camera service is unavailable', null);
         return;
       }
 
       const cameraId = service.findCameraIdByOhosCodes(reqPosition, reqType);
+      Log.i(TAG, `setOhosCamera findCameraIdByOhosCodes result: cameraId=${cameraId}`);
       if (!cameraId) {
+        Log.e(TAG, `setOhosCamera no camera matches: position=${reqPosition}, type=${reqType}`);
         result.error(
           PluginError.InvalidArguments,
           `No camera matches position=${reqPosition}, type=${reqType}`,
@@ -1235,19 +1246,27 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       }
 
       this.selectedCameraId = cameraId;
+      Log.i(TAG, `setOhosCamera selectedCameraId updated to: ${cameraId}`);
     } catch (error) {
+      Log.e(TAG, 'setOhosCamera query camera list failed: ' + JSON.stringify(error));
       result.error(PluginError.InitCameraError, 'Failed to query camera list: ' + JSON.stringify(error), null);
       return;
     }
 
     this.selectedCameraPositionCode = reqPosition;
     this.selectedCameraTypeCode = reqType;
+    Log.i(TAG, `setOhosCamera state updated: cameraId=${this.selectedCameraId}, positionCode=${this.selectedCameraPositionCode}, typeCode=${this.selectedCameraTypeCode}, isCameraInitialized=${this.isCameraInitialized}, hasSurface=${!!this.surfaceId}, isPausedByUser=${this.previewState.isPausedByUser}`);
+
     getCurrentCameraPreviewComponent()?.applyCropRect();
 
     if (this.isCameraInitialized && this.surfaceId && !this.previewState.isPausedByUser) {
+      Log.i(TAG, 'setOhosCamera restarting preview after camera switch');
       void this.restartPreviewAfterLayoutChange();
+    } else {
+      Log.i(TAG, 'setOhosCamera preview not restarted: camera will use new id on next startPreview');
     }
 
+    Log.i(TAG, 'setOhosCamera completed successfully');
     result.success(true);
   }
 

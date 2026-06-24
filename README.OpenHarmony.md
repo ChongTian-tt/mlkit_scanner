@@ -1,19 +1,21 @@
 # mlkit_scanner
 
-This project is based on [mlkit_scanner](https://www.dns-tech.ru/) and provides barcode, text, face, and object recognition capabilities for OpenHarmony Flutter scenarios.
+This project is based on [mlkit_scanner](https://github.com/dns-technologies/mlkit_scanner).
 
-## 1. Installation and Usage
+## Introduction
 
-### 1.1 Installation
-Go to your project directory and add the dependency in `pubspec.yaml`:
+mlkit_scanner is a Flutter barcode recognition plugin that uses the MLKit API to provide barcode scanning capabilities, supporting camera preview, flash control, zoom, crop area settings, and camera switching.
 
-#### pubspec.yaml
+## Download and Installation
+
+Go to your project directory and add the following dependency in `pubspec.yaml`:
+
 ```yaml
 dependencies:
   mlkit_scanner:
     git:
       url: https://gitcode.com/org/OpenHarmony-Flutter/mlkit_scanner
-      ref: main
+      ref: 0.6.0-ohos-1.0.0
 ```
 
 Run:
@@ -22,13 +24,65 @@ Run:
 flutter pub get
 ```
 
-### 1.2 Usage Example
-See [example](example/lib/main.dart).
+> TAG naming rule: `original-version-ohos-version-number`. For changes between TAGs, see CHANGELOG.md.
 
-The simplest usage:
+| Flutter Framework Version | TAG Name | Note |
+| --- | --- | --- |
+| 3.7.12-ohos-1.0.6 | 0.6.0-ohos-1.0.0 | Initial adaptation |
+| 3.22.0-ohos | 0.6.0-ohos-1.0.0 | |
+| 3.27.4-dev-oh | 0.6.0-ohos-1.0.0 | |
+| 3.35.7-ohos-0.0.1 | 0.6.0-ohos-1.0.0 | |
+
+## Constraints and Limitations
+
+### Compatibility
+
+Verified on the following versions:
+
+1. Flutter: 3.7.12-ohos-1.0.6; SDK: 5.0.0(12); IDE: DevEco Studio: 5.0.13.200; ROM: 5.1.0.120 SP3;
+2. Flutter: 3.22.0-ohos; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
+3. Flutter: oh-3.27.4-dev; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
+4. Flutter: 3.35.7-ohos-0.0.1; SDK: 6.0.1(21); IDE: DevEco Studio: 6.0.1.260; ROM: 6.0.0.120 SP6;
+
+### Permission Requirements
+
+Camera permission must be configured in module.json5.
+
+Open `entry/src/main/module.json5` and add:
+
+```json
+"requestPermissions": [
+  {
+    "name": "ohos.permission.CAMERA",
+    "reason": "$string:camera_reason",
+    "usedScene": {
+      "abilities": [
+        "EntryAbility"
+      ],
+      "when": "inuse"
+    }
+  }
+]
+```
+
+Open `entry/src/main/resources/base/element/string.json` and add:
+
+```json
+{
+  "string": [
+    {
+      "name": "camera_reason",
+      "value": "Use camera for barcode scanning"
+    }
+  ]
+}
+```
+
+## Usage Example
+
+mlkit_scanner provides the `BarcodeScanner` widget. The simplest usage is as follows:
 
 ```dart
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:mlkit_scanner/mlkit_scanner.dart';
 
@@ -41,11 +95,12 @@ class MlkitScannerExample extends StatelessWidget {
       height: 200,
       child: BarcodeScanner(
         onScannerInitialized: (controller) async {
-          // Start barcode scanning. `delay` is in milliseconds.
+          // Start barcode scanning, delay is the scan interval in milliseconds
           await controller.startScan(100);
         },
         onScan: (barcode) {
-          debugPrint(barcode.displayValue ?? barcode.rawValue);
+          // Get recognition result
+          debugPrint(barcode.rawValue);
         },
       ),
     );
@@ -53,39 +108,130 @@ class MlkitScannerExample extends StatelessWidget {
 }
 ```
 
-## 2. Constraints
-1. Flutter: 3.7.12-ohos-1.0.6; SDK: 5.0.0(12); IDE: DevEco Studio: 5.0.13.200; ROM: 5.1.0.120 SP3;
-2. Flutter: 3.22.0-ohos; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
-3. Flutter: oh-3.27.4-dev; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
-4. Flutter: 3.35.7-ohos-0.0.1; SDK: 6.0.1(21); IDE: DevEco Studio: 6.0.1.260; ROM: 6.0.0.120 SP6;
+## Usage Instructions
 
-## 3. Version and Framework Mapping
-|       | 3.7 | 3.22 | 3.27 | 3.35 |
-|-------|:---:|:----:|:----:|:----:|
-| 1.0.0 |  ✅  |  ✅   |  ✅   |  ✅   |
+### 1. Creating a BarcodeScanner
 
-## 4. API
+`BarcodeScanner` is the core widget, requiring `onScannerInitialized` and `onScan` callbacks:
 
-> [!TIP] "ohos Support" column: yes means supported; no means not supported; partially means partially supported.
+```dart
+BarcodeScanner(
+  initialArguments: const OhosScannerParameters(
+    cropRect: CropRect(scaleHeight: 0.7, scaleWidth: 0.7),
+  ),
+  onScannerInitialized: (controller) {
+    // Save controller for subsequent control
+  },
+  onScan: (barcode) {
+    // Handle recognition result
+  },
+)
+```
 
-| Name | Description | Type | Input | Output | ohos Support |
+### 2. Flash Control
+
+```dart
+// Toggle flash (device must support it)
+await controller.toggleFlash();
+```
+
+### 3. Scanning Control
+
+```dart
+// Start barcode recognition
+await controller.startScan(100);
+
+// Cancel recognition (keep preview)
+await controller.cancelScan();
+
+// Dynamically set scan polling interval
+await controller.setDelay(500);
+```
+
+### 4. Camera Control
+
+```dart
+// Pause camera preview and recognition
+await controller.pauseCamera();
+
+// Resume camera preview and recognition
+await controller.resumeCamera();
+
+// Set zoom, value range 0~1
+await controller.setZoom(0.5);
+```
+
+### 5. Crop Area
+
+```dart
+// Set recognition crop area (relative to CameraPreview)
+await controller.setCropArea(CropRect(scaleHeight: 0.7, scaleWidth: 0.7));
+```
+
+### 6. Camera Switching
+
+```dart
+// Get available OHOS camera list
+List<OhosCamera> cameras = await MLKitUtils().getOhosAvailableCameras();
+
+// Switch camera by position and type
+await controller.setOhosCamera(
+  position: OhosCameraPosition.back,
+  type: OhosCameraType.wideAngle,
+);
+```
+
+## API Reference
+
+### API
+
+> [!TIP] "OHOS Support" column: yes means supported, no means not supported, partially means partially supported.
+
+| Name | Description | Type | Parameters | Return Value | OHOS Support |
 | --- | --- | --- | --- | --- | --- |
-| initCameraPreview | Initialize camera preview and apply initial parameters (e.g. crop/zoom) | function | `initialArguments?: ScannerParameters` (optional) | `Future<void>` | yes |
-| dispose | Release camera and scanning resources | function | None | `Future<void>` | yes |
-| toggleFlash | Toggle device flash light (if supported by device) | function | None | `Future<void>` | yes |
-| startScan | Start barcode recognition and detect at intervals of `delay` | function | `type: RecognitionType; delay: int` (milliseconds) | `Future<void>` | yes |
-| cancelScan | Cancel recognition flow and keep preview | function | None | `Future<void>` | yes |
-| setScanDelay | Set scan polling interval `delay` | function | `delay: int` (milliseconds) | `Future<void>` | yes |
-| onScanResult | Recognition result callback (native -> Dart, triggers `BarcodeScanner.onScan`) | event | `raw_value/display_value/format/value_type` | None (event) | yes |
-| changeTorchStateMethod | Torch state change callback (native -> Dart, drives `torchToggleStream`) | event | `bool` | None (event) | yes |
-| updateConstraints | Update preview constraints (width/height) and re-apply crop area if needed | function | `width: double; height: double` | `Future<void>` | yes |
-| pauseCameraMethod | Pause camera preview (and scanning flow) | function | None | `Future<void>` | yes |
-| resumeCameraMethod | Resume camera preview and scanning flow | function | None | `Future<void>` | yes |
-| setZoom | Set camera zoom. `value` range: `0~1` | function | `value: double` (0~1) | `Future<void>` | yes |
-| setCropAreaMethod | Set recognition crop area (relative to `CameraPreview`) | function | `rect: CropRect` | `Future<void>` | yes |
-| getIosAvailableCameras | Query available OHOS cameras on the current device (the channel name is retained for compatibility) | function | None | `Future<List<OhosCamera>>` | yes |
-| setIosCamera | Switch the OHOS camera by position and type (the channel name is retained for compatibility) | function | `position: OhosCameraPosition; type: OhosCameraType` | `Future<void>` | yes |
+| toggleFlash | Toggle device flash (device must support it) | Method | None | `Future<void>` | yes |
+| startScan | Start barcode recognition and detect at intervals of delay | Method | `type: RecognitionType; delay: int` (milliseconds) | `Future<void>` | yes |
+| cancelScan | Cancel recognition flow and keep preview | Method | None | `Future<void>` | yes |
+| setScanDelay | Dynamically set scan polling interval | Method | `delay: int` (milliseconds) | `Future<void>` | yes |
+| pauseCamera | Pause camera preview (and recognition flow) | Method | None | `Future<void>` | yes |
+| resumeCamera | Resume paused camera preview and recognition flow | Method | None | `Future<void>` | yes |
+| setZoom | Set camera zoom | Method | `value: double` (0~1) | `Future<void>` | yes |
+| setCropArea | Set recognition crop area (relative to CameraPreview) | Method | `rect: CropRect` | `Future<void>` | yes |
+| getOhosAvailableCameras | Get available OHOS camera list on the current device | Method | None | `Future<List<OhosCamera>>` | yes |
+| setOhosCamera | Switch OHOS camera by position and type | Method | `position: OhosCameraPosition; type: OhosCameraType` | `Future<void>` | yes |
 
-## 5. License
-This project is open source under the [MIT](LICENSE) license.
+## Known Issues
 
+None
+
+## Directory Structure
+
+```
+|---- mlkit_scanner
+|     |---- android       # Android adaptation code
+|     |---- example       # Multi-platform example application
+|           |---- lib     # Example code
+|           |---- ohos    # OpenHarmony project
+|     |---- ios           # iOS adaptation code
+|     |---- lib           # Core code implementation
+|           |---- models  # Data models (Barcode, CropRect, OhosCamera, etc.)
+|           |---- platform # Platform channel (MlKitChannel)
+|           |---- utils   # Utilities (MLKitUtils)
+|           |---- widgets # Widget components (BarcodeScanner, CameraPreview)
+|           |---- mlkit_scanner.dart # Library main entry file
+|     |---- ohos          # OpenHarmony adaptation code
+|     |---- test          # Unit test files
+|     |---- CHANGELOG.md            # Changelog
+|     |---- README.OpenHarmony_CN.md # Chinese documentation
+|     |---- README.OpenHarmony.md   # English documentation
+|     |---- README.OpenSource.md    # Open source notice
+|     |---- pubspec.yaml           # Configuration file
+```
+
+## Contributing
+
+If you encounter any issues, please submit an [Issue](https://gitcode.com/org/OpenHarmony-Flutter/mlkit_scanner/issues). Contributions via [PR](https://gitcode.com/org/OpenHarmony-Flutter/mlkit_scanner/pulls) are also welcome.
+
+## License
+
+This project is licensed under [MIT](https://github.com/dns-technologies/mlkit_scanner/blob/master/LICENSE).
