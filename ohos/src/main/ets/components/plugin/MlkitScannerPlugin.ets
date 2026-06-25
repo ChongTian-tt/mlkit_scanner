@@ -22,12 +22,14 @@ import {
 } from '@ohos/flutter_ohos';
 import { CameraPreviewFactory } from './CameraPreviewFactory';
 import { PluginConstants } from './PluginConstants';
+import { getCurrentMLKitScannerView } from './MLKitScannerView';
 
 const TAG: string = '[MlkitScannerPlugin:]';
 
 /** MlkitScannerPlugin **/
 export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
   private pluginBinding: FlutterPluginBinding | null = null;
+  private registeredFactory: boolean = false;
 
   getUniqueClassName(): string {
     return TAG;
@@ -38,6 +40,15 @@ export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
   }
 
   onDetachedFromEngine(binding: FlutterPluginBinding): void {
+    // 兜底保障：主动触发 PlatformView 资源释放
+    try {
+      const view = getCurrentMLKitScannerView();
+      if (view) {
+        view.dispose();
+      }
+    } catch (error) {
+      Log.e(TAG, 'onDetachedFromEngine dispose error: ' + JSON.stringify(error));
+    }
     this.pluginBinding = null;
   }
 
@@ -46,10 +57,24 @@ export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
       return;
     }
     const factory: PlatformViewFactory = new CameraPreviewFactory(this.pluginBinding.getBinaryMessenger());
-    this.pluginBinding.getPlatformViewRegistry().registerViewFactory(PluginConstants.cameraPlatformViewName, factory);
+    this.pluginBinding.getPlatformViewRegistry().registerViewFactory(PluginConstants.CAMERA_PLATFORM_VIEW_NAME, factory);
+    this.registeredFactory = true;
   }
 
   onDetachedFromAbility(): void {
+    // PlatformViewRegistry API 不提供 unregisterViewFactory，
+    // 在 Ability 分离时主动释放 PlatformView 资源作为兜底
+    if (this.registeredFactory) {
+      try {
+        const view = getCurrentMLKitScannerView();
+        if (view) {
+          view.dispose();
+        }
+      } catch (error) {
+        Log.w(TAG, 'onDetachedFromAbility dispose skipped: ' + JSON.stringify(error));
+      }
+      this.registeredFactory = false;
+    }
     this.pluginBinding = null;
   }
 }

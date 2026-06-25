@@ -192,7 +192,7 @@ await controller.setOhosCamera(
 | toggleFlash | Toggle device flash (device must support it) | Method | None | `Future<void>` | yes |
 | startScan | Start barcode recognition and detect at intervals of delay | Method | `type: RecognitionType; delay: int` (milliseconds) | `Future<void>` | yes |
 | cancelScan | Cancel recognition flow and keep preview | Method | None | `Future<void>` | yes |
-| setScanDelay | Dynamically set scan polling interval | Method | `delay: int` (milliseconds) | `Future<void>` | yes |
+| setDelay | Dynamically set scan polling interval | Method | `delay: int` (milliseconds) | `Future<void>` | yes |
 | pauseCamera | Pause camera preview (and recognition flow) | Method | None | `Future<void>` | yes |
 | resumeCamera | Resume paused camera preview and recognition flow | Method | None | `Future<void>` | yes |
 | setZoom | Set camera zoom | Method | `value: double` (0~1) | `Future<void>` | yes |

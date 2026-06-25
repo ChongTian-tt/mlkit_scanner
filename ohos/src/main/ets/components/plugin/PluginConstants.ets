@@ -16,24 +16,24 @@
 import { Permissions } from '@kit.AbilityKit';
 
 export class PluginConstants {
-  static readonly channelName: string = 'mlkit_channel';
-  static readonly permissionName: Permissions = 'ohos.permission.CAMERA';
-  static readonly cameraPlatformViewName: string = 'mlkit/camera_preview';
-  static readonly initCameraMethod: string = 'initCameraPreview';
-  static readonly resumeCameraMethod: string = 'resumeCameraMethod';
-  static readonly updateConstraintsMethod: string = 'updateConstraints';
-  static readonly pauseCameraMethod: string = 'pauseCameraMethod';
-  static readonly disposeCameraMethod: string = 'dispose';
-  static readonly toggleFlashMethod: string = 'toggleFlash';
-  static readonly startScanMethod: string = 'startScan';
-  static readonly cancelScanMethod: string = 'cancelScan';
-  static readonly setScanDelayMethod: string = 'setScanDelay';
-  static readonly scanResultMethod: string = 'onScanResult';
-  static readonly changeTorchStateMethod: string = 'changeTorchStateMethod';
-  static readonly setZoomMethod: string = 'setZoom';
-  static readonly setCropAreaMethod: string = 'setCropAreaMethod';
-  static readonly getOhosAvailableCamerasMethod: string = 'getIosAvailableCameras';
-  static readonly setOhosCameraMethod: string = 'setIosCamera';
+  static readonly CHANNEL_NAME: string = 'mlkit_channel';
+  static readonly PERMISSION_NAME: Permissions = 'ohos.permission.CAMERA';
+  static readonly CAMERA_PLATFORM_VIEW_NAME: string = 'mlkit/camera_preview';
+  static readonly INIT_CAMERA_METHOD: string = 'initCameraPreview';
+  static readonly RESUME_CAMERA_METHOD: string = 'resumeCameraMethod';
+  static readonly UPDATE_CONSTRAINTS_METHOD: string = 'updateConstraints';
+  static readonly PAUSE_CAMERA_METHOD: string = 'pauseCameraMethod';
+  static readonly DISPOSE_CAMERA_METHOD: string = 'dispose';
+  static readonly TOGGLE_FLASH_METHOD: string = 'toggleFlash';
+  static readonly START_SCAN_METHOD: string = 'startScan';
+  static readonly CANCEL_SCAN_METHOD: string = 'cancelScan';
+  static readonly SET_SCAN_DELAY_METHOD: string = 'setScanDelay';
+  static readonly SCAN_RESULT_METHOD: string = 'onScanResult';
+  static readonly CHANGE_TORCH_STATE_METHOD: string = 'changeTorchStateMethod';
+  static readonly SET_ZOOM_METHOD: string = 'setZoom';
+  static readonly SET_CROP_AREA_METHOD: string = 'setCropAreaMethod';
+  static readonly GET_OHOS_AVAILABLE_CAMERAS_METHOD: string = 'getIosAvailableCameras';
+  static readonly SET_OHOS_CAMERA_METHOD: string = 'setIosCamera';
   static readonly SCAN_COMPONENT_WIDTH_100 = '100%';
   // 预览尺寸的默认比例。初始化早期在尚未拿到真实相机 profile 前，先使用该比例占位。
   static readonly PREVIEW_RATIO_W: number = 9;
@@ -67,12 +67,12 @@ export class PluginConstants {
 }
 
 export class PluginError {
-  static readonly InitCameraError: string = '1';
-  static readonly AuthorizationCameraError: string = '2';
-  static readonly CameraIsNotInitialized: string = '3';
-  static readonly DeviceHasNotFlash: string = '4';
-  static readonly InvalidArguments: string = '5';
-  static readonly DeviceHasNotZoom: string = '6';
+  static readonly INIT_CAMERA_ERROR: string = '1';
+  static readonly AUTHORIZATION_CAMERA_ERROR: string = '2';
+  static readonly CAMERA_IS_NOT_INITIALIZED: string = '3';
+  static readonly DEVICE_HAS_NOT_FLASH: string = '4';
+  static readonly INVALID_ARGUMENTS: string = '5';
+  static readonly DEVICE_HAS_NOT_ZOOM: string = '6';
 }
 
 export interface OhosScannerParameters {

@@ -22,7 +22,7 @@ import {
 } from '@kit.AbilityKit';
 import { Log } from '@ohos/flutter_ohos';
 
-const TAG = '[PermissionsUtil] :';
+const TAG: string = '[PermissionsUtil] :';
 
 export class PermissionsUtil {
   public static async checkAccessToken(permission: Permissions): Promise<abilityAccessCtrl.GrantStatus> {
@@ -48,7 +48,7 @@ export class PermissionsUtil {
 
   public static async reqPermissionsFromUser(context: Context, permission: Permissions): Promise<number[]> {
     let atManager = abilityAccessCtrl.createAtManager();
-    let grantStatus: PermissionRequestResult = { permissions: [], authResults: [] }
+    let grantStatus: PermissionRequestResult = { permissions: [], authResults: [] };
     try {
       grantStatus = await atManager.requestPermissionsFromUser(context, [permission]);
     } catch (error) {
@@ -66,7 +66,7 @@ export class PermissionsUtil {
       if (grantStatus[i] === 0) {
         valid = true;
       } else {
-        return await PermissionsUtil.re_authentication(context, permission);
+        return await PermissionsUtil.reAuthentication(context, permission);
       }
     }
     return valid;
@@ -87,7 +87,7 @@ export class PermissionsUtil {
   }
 
   // 二次鉴权
-  public static async re_authentication(context: Context, permission: Permissions): Promise<boolean> {
+  public static async reAuthentication(context: Context, permission: Permissions): Promise<boolean> {
     let atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
     try {
       let data: Array<abilityAccessCtrl.GrantStatus> =

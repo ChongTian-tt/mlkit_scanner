@@ -26,7 +26,7 @@ let currentCameraPreview: CameraPreviewComponent | null = null;
 
 @Component
 export struct CameraPreviewComponent {
-  private mXComponentController: XComponentController = new XComponentController();
+  private xComponentController: XComponentController = new XComponentController();
   private context = this.getUIContext().getHostContext() as common.UIAbilityContext;
   // 用于即使外层 MLKitScannerView 仍标记为已初始化，组件被重建后也需要再次触发 setCameraInitialized(true)
   private isScanKitInitialized: boolean = false;
@@ -87,7 +87,7 @@ export struct CameraPreviewComponent {
         XComponent({
           id: 'componentId',
           type: XComponentType.SURFACE,
-          controller: this.mXComponentController,
+          controller: this.xComponentController,
         })
           .onLoad(() => {
             this.onLoadHandle();
@@ -108,7 +108,7 @@ export struct CameraPreviewComponent {
             .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
             .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
             .position({ x: 0, y: 0 })
-            .key(
+            .id(
               'scanner-overlay-' +
               this.cropRectState.scaleWidth + '-' +
               this.cropRectState.scaleHeight + '-' +
@@ -170,7 +170,11 @@ export struct CameraPreviewComponent {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
     this.registerLifecycle();
-    await this.onInitCameraPreviewRequested();
+    try {
+      await this.onInitCameraPreviewRequested();
+    } catch (error) {
+      Log.e(TAG, 'aboutToAppear init error: ' + JSON.stringify(error));
+    }
   }
 
   aboutToDisappear() {
@@ -197,9 +201,13 @@ export struct CameraPreviewComponent {
   private async onLoadHandle(): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
-      this.surfaceId = this.mXComponentController.getXComponentSurfaceId();
-      this.flutterMLKitScannerView.setSurfaceId(this.surfaceId);
-      await this.tryInitScanKit('onLoad');
+      try {
+        this.surfaceId = this.xComponentController.getXComponentSurfaceId();
+        this.flutterMLKitScannerView.setSurfaceId(this.surfaceId);
+        await this.tryInitScanKit('onLoad');
+      } catch (error) {
+        Log.e(TAG, 'onLoadHandle error: ' + JSON.stringify(error));
+      }
     }
   }
 
@@ -258,7 +266,7 @@ export struct CameraPreviewComponent {
 
   private async refreshPermissionState(scene: string): Promise<void> {
     this.hasPermission =
-      await PermissionsUtil.checkAndRequestCameraPermission(this.context, PluginConstants.permissionName);
+      await PermissionsUtil.checkAndRequestCameraPermission(this.context, PluginConstants.PERMISSION_NAME);
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
       this.flutterMLKitScannerView.userGrant = this.hasPermission;
@@ -276,7 +284,7 @@ export struct CameraPreviewComponent {
     if (!this.hasPermission) {
       this.canRenderCamera = false;
       this.flutterMLKitScannerView.methodResult.error(
-        PluginError.AuthorizationCameraError,
+        PluginError.AUTHORIZATION_CAMERA_ERROR,
         'Camera permission denied',
         null,
       );
@@ -307,7 +315,7 @@ export struct CameraPreviewComponent {
     } catch (error) {
       Log.e(TAG, `${scene} camera init error: ` + error);
       this.flutterMLKitScannerView.methodResult?.error(
-        PluginError.InitCameraError,
+        PluginError.INIT_CAMERA_ERROR,
         'camera init failed',
         JSON.stringify(error),
       );
@@ -654,7 +662,8 @@ export struct CameraPreviewComponent {
   // 更新对焦提示状态，根据是否需要锁定切换对焦环和锁定图标的显示，并启动相应动画
   private updateFocusHint(needLock: boolean): void {
     this.startFocusRingAnim();
-    const isAlreadyLocked = needLock && this.isFocusLockedState && this.showLockIconState && this.isLockIconSettledState;
+    const isAlreadyLocked =
+      needLock && this.isFocusLockedState && this.showLockIconState && this.isLockIconSettledState;
     this.isFocusLockedState = needLock;
     this.refreshFocusRingDisplayState();
     if (needLock) {

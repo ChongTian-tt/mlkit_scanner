@@ -192,7 +192,7 @@ await controller.setOhosCamera(
 | toggleFlash | 切换设备闪光灯（需设备支持） | 方法 | 无 | `Future<void>` | yes |
 | startScan | 启动条码识别，并按 delay 间隔触发识别 | 方法 | `type: RecognitionType; delay: int`（毫秒） | `Future<void>` | yes |
 | cancelScan | 取消条码识别流程并保持预览 | 方法 | 无 | `Future<void>` | yes |
-| setScanDelay | 动态设置识别轮询间隔 | 方法 | `delay: int`（毫秒） | `Future<void>` | yes |
+| setDelay | 动态设置识别轮询间隔 | 方法 | `delay: int`（毫秒） | `Future<void>` | yes |
 | pauseCamera | 暂停相机预览（并暂停识别流程） | 方法 | 无 | `Future<void>` | yes |
 | resumeCamera | 恢复暂停后的相机预览与识别流程 | 方法 | 无 | `Future<void>` | yes |
 | setZoom | 设置相机变焦 | 方法 | `value: double`（0~1） | `Future<void>` | yes |

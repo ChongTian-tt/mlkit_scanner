@@ -20,18 +20,20 @@ import { Log, MethodResult } from '@ohos/flutter_ohos';
 import { detectBarcode, scanBarcode, scanCore } from '@kit.ScanKit';
 import { PluginConstants, Size } from './PluginConstants';
 
-const TAG = '[CameraService]:';
+const TAG: string = '[CameraService]:';
 
 export class CameraService {
   public cameraManager: camera.CameraManager | undefined = undefined;
   private camerasLoadedAtMs: number = 0;
   private camerasDevices: Array<camera.CameraDevice> = [];
   // 当前使用的相机设备
-  private curcamerasDevice: camera.CameraDevice | undefined = undefined;
+  private currentCameraDevice: camera.CameraDevice | undefined = undefined;
   // 相机设备输入对象
   private cameraInput: camera.CameraInput | undefined = undefined;
   // 预览输出类
   private previewOutput: camera.PreviewOutput | undefined = undefined;
+  // 第二预览输出（输出到 ImageReceiver 用于扫码解码）
+  private previewOutput2: camera.PreviewOutput | undefined = undefined;
   // 普通拍照模式会话类
   private photoSession: camera.PhotoSession | null = null;
   private context: Context | null = null;
@@ -41,6 +43,8 @@ export class CameraService {
   private lastDecodeAtMs: number = 0;
   // 解码节流间隔（毫秒），由外部通过 setDecodeThrottleMs 注入，默认 800ms
   private decodeThrottleMs: number = 800;
+  // imageArrival 事件回调引用，用于 off() 取消订阅
+  private imageArrivalCallback: (() => void) | null = null;
   // 由外部注入的闪光灯状态读写器（共享 MLKitScannerView 中的状态）
   private readonly getSharedFlashStatus: () => boolean;
   private readonly setSharedFlashStatus: (status: boolean) => void;
@@ -211,15 +215,58 @@ export class CameraService {
       if (!this.cameraManager) {
         this.cameraManager = camera.getCameraManager(this.context);
       }
-      // 获取设备支持的相机列表
-      this.camerasDevices = this.cameraManager.getSupportedCameras() ?? [];
+      // 使用 getCameraDevices(position, types, connectType) 按位置+类型+连接方式查询相机
+      // 遍历所有 position 和 type 组合，收集所有可用相机
+      this.camerasDevices = this.queryAllCameraDevices();
       this.camerasLoadedAtMs = now;
+      Log.i(TAG, `safeLoadCameras: found ${this.camerasDevices.length} camera(s)`);
       return this.camerasDevices.length > 0;
     } catch (error) {
       Log.e(TAG, 'safeLoadCameras failed: ' + JSON.stringify(error));
       this.camerasLoadedAtMs = 0;
       return false;
     }
+  }
+
+  // 遍历所有 position × type 组合查询相机设备，connectType 使用内置连接
+  private queryAllCameraDevices(): Array<camera.CameraDevice> {
+    let allDevices: Array<camera.CameraDevice> = [];
+    let knownCameraIds: Set<string> = new Set();
+    const positions: Array<camera.CameraPosition> = [
+      camera.CameraPosition.CAMERA_POSITION_UNSPECIFIED,
+      camera.CameraPosition.CAMERA_POSITION_BACK,
+      camera.CameraPosition.CAMERA_POSITION_FRONT,
+    ];
+    const types: Array<camera.CameraType> = [
+      camera.CameraType.CAMERA_TYPE_DEFAULT,
+      camera.CameraType.CAMERA_TYPE_WIDE_ANGLE,
+      camera.CameraType.CAMERA_TYPE_ULTRA_WIDE,
+      camera.CameraType.CAMERA_TYPE_TELEPHOTO,
+      camera.CameraType.CAMERA_TYPE_TRUE_DEPTH,
+    ];
+
+    for (const pos of positions) {
+      for (const type of types) {
+        try {
+          const devices = this.cameraManager?.getCameraDevices(
+            pos, [type], camera.ConnectionType.CAMERA_CONNECTION_BUILT_IN
+          );
+          if (devices && devices.length > 0) {
+            for (const dev of devices) {
+              if (!knownCameraIds.has(dev.cameraId)) {
+                knownCameraIds.add(dev.cameraId);
+                allDevices.push(dev);
+                Log.i(TAG, `queryAllCameraDevices: found cameraId=${dev.cameraId}, position=${dev.cameraPosition}, type=${dev.cameraType}`);
+              }
+            }
+          }
+        } catch (error) {
+          // 某些 position+type 组合可能不支持，忽略即可
+        }
+      }
+    }
+
+    return allDevices;
   }
 
   // 获取可用的相机列表
@@ -231,7 +278,9 @@ export class CameraService {
 
     const result: Array<Record<string, number | string>> = [];
     for (const device of this.camerasDevices) {
-      Log.i(TAG, `getAvailableCameras: cameraId=${device.cameraId}, position=${device.cameraPosition}, type=${device.cameraType}`);
+      Log.i(TAG,
+        `getAvailableCameras: cameraId=${device.cameraId}, ` +
+        `position=${device.cameraPosition}, type=${device.cameraType}`);
       result.push({
         'cameraId': device.cameraId,
         'position': device.cameraPosition,
@@ -266,7 +315,7 @@ export class CameraService {
   async createCamera(cameraManager: camera.CameraManager): Promise<void> {
     this.cameraManager = cameraManager;
     try {
-      this.camerasDevices = this.cameraManager.getSupportedCameras() ?? [];
+      this.camerasDevices = this.queryAllCameraDevices();
       this.camerasLoadedAtMs = Date.now();
     } catch (error) {
       Log.e(TAG, 'createCamera failed: ' + JSON.stringify(error));
@@ -281,22 +330,22 @@ export class CameraService {
       return false;
     }
 
-    this.curcamerasDevice = this.resolveCameraDevice(cameraId);
-    if (!this.curcamerasDevice) {
+    this.currentCameraDevice = this.resolveCameraDevice(cameraId);
+    if (!this.currentCameraDevice) {
       Log.e(TAG, 'initCamera failed: camera device unavailable');
       return false;
     }
 
     try {
       // 获取指定的相机设备对象支持的模式
-      const sceneModes = this.cameraManager.getSupportedSceneModes(this.curcamerasDevice);
+      const sceneModes = this.cameraManager.getSupportedSceneModes(this.currentCameraDevice);
       const supportPhoto = sceneModes.indexOf(camera.SceneMode.NORMAL_PHOTO) >= 0;
       if (!supportPhoto) {
         Log.e(TAG, 'photo mode not supported');
         return false;
       }
 
-      const previewProfile = this.getPreferredPreviewProfile(this.curcamerasDevice);
+      const previewProfile = this.getPreferredPreviewProfile(this.currentCameraDevice);
       if (!previewProfile) {
         Log.e(TAG, 'preview profile not found');
         return false;
@@ -312,9 +361,9 @@ export class CameraService {
       // 用于获取一个surface id供Camera或其他组件使用
       const imageSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
       // 创建第二个预览输出对象，输出到 imageReceiver 以获取预览帧进行扫码解码
-      const previewOutput2 = this.cameraManager.createPreviewOutput(previewProfile, imageSurfaceId);
+      this.previewOutput2 = this.cameraManager.createPreviewOutput(previewProfile, imageSurfaceId);
       // 使用CameraDevice对象创建CameraInput实例
-      this.cameraInput = this.cameraManager.createCameraInput(this.curcamerasDevice);
+      this.cameraInput = this.cameraManager.createCameraInput(this.currentCameraDevice);
       // 打开相机
       await this.cameraInput.open();
 
@@ -325,7 +374,7 @@ export class CameraService {
       this.photoSession.addInput(this.cameraInput);
       // 把PreviewOutput加入到会话
       this.photoSession.addOutput(this.previewOutput);
-      this.photoSession.addOutput(previewOutput2);
+      this.photoSession.addOutput(this.previewOutput2);
       // 提交配置信息
       await this.photoSession.commitConfig();
       // 开始会话工作
@@ -344,13 +393,15 @@ export class CameraService {
     this.photoSession = null;
     this.cameraInput = undefined;
     this.previewOutput = undefined;
-    this.curcamerasDevice = undefined;
+    this.previewOutput2 = undefined;
+    this.currentCameraDevice = undefined;
   }
 
   private async releaseSessionResources(): Promise<void> {
     const session = this.photoSession;
     const input = this.cameraInput;
     const preview = this.previewOutput;
+    const preview2 = this.previewOutput2;
     this.clearSessionRefs();
 
     try {
@@ -369,6 +420,12 @@ export class CameraService {
       await preview?.release();
     } catch (error) {
       Log.w(TAG, 'releaseSessionResources preview skipped: ' + JSON.stringify(error));
+    }
+
+    try {
+      await preview2?.release();
+    } catch (error) {
+      Log.w(TAG, 'releaseSessionResources preview2 skipped: ' + JSON.stringify(error));
     }
   }
 
@@ -551,8 +608,8 @@ export class CameraService {
     const maxRatio = range[1];
     const clamped = Math.max(0, Math.min(1, normalized));
     // 对齐 iOS: zoom = 1 + value * 5，语义范围约为 1x..6x，再按设备能力夹取。
-    const OhosStyleRatio = 1 + clamped * 5;
-    const ratio = Math.max(minRatio, Math.min(OhosStyleRatio, maxRatio));
+    const ohosStyleRatio = 1 + clamped * 5;
+    const ratio = Math.max(minRatio, Math.min(ohosStyleRatio, maxRatio));
     // 官方说明支持到小数点后两位精度。
     const ratioRounded = Math.round(ratio * 100) / 100;
 
@@ -590,19 +647,38 @@ export class CameraService {
   async releaseCamera(): Promise<void> {
     try {
       this.isStop = true;
+      this.offImageArrival();
       await this.releaseSessionResources();
       if (!this.isImageReceiverReleased) {
         this.isImageReceiverReleased = true;
         await this.imageReceiver.release();
       }
+      // 显式清理缓存数据
+      this.preferredPreviewProfileCache = {};
+      this.camerasDevices = [];
     } catch (error) {
       Log.w(TAG, 'releaseCamera skipped: ' + JSON.stringify(error));
     }
   }
 
+  // 取消 imageArrival 事件订阅，防止回调在释放后触发和循环引用
+  offImageArrival(): void {
+    if (this.imageArrivalCallback) {
+      try {
+        this.imageReceiver.off('imageArrival', this.imageArrivalCallback);
+      } catch (error) {
+        Log.w(TAG, 'offImageArrival skipped: ' + JSON.stringify(error));
+      }
+      this.imageArrivalCallback = null;
+    }
+  }
+
   // 注册预览帧到达的回调函数，在回调中读取预览帧图像并进行扫码解码
   onImageArrival(scanCallback: (result: scanBarcode.ScanResult) => void): void {
-    this.imageReceiver.on('imageArrival', () => {
+    // 先取消旧监听器
+    this.offImageArrival();
+
+    this.imageArrivalCallback = () => {
       if (this.isStop) {
         return;
       }
@@ -613,7 +689,8 @@ export class CameraService {
           return;
         }
         // 根据图像的组件类型从图像中获取组件缓存
-        nextImage.getComponent(image.ComponentType.JPEG, async (compErr: BusinessError, imgComponent: image.Component) => {
+        nextImage.getComponent(image.ComponentType.JPEG,
+          async (compErr: BusinessError, imgComponent: image.Component) => {
           if (compErr || imgComponent === undefined) {
             Log.e(TAG, 'onImageArrival getComponent(JPEG) failed: ' + JSON.stringify(compErr));
             await nextImage.release();
@@ -621,13 +698,17 @@ export class CameraService {
           }
           if (imgComponent.byteBuffer as ArrayBuffer) {
             // 对图片进行解码
-            await this.decodeImageBuffer(imgComponent, nextImage.size.width, nextImage.size.height, scanCallback, nextImage);
+            await this.decodeImageBuffer(
+              imgComponent, nextImage.size.width, nextImage.size.height,
+              scanCallback, nextImage
+            );
           } else {
             await nextImage.release();
           }
         });
       });
-    });
+    };
+    this.imageReceiver.on('imageArrival', this.imageArrivalCallback);
   }
 
   async decodeImageBuffer(
