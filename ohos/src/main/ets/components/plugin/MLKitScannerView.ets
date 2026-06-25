@@ -150,7 +150,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   private extractScanRect(result: scanBarcode.ScanResult): ScanRectLike | null {
     try {
-      const rec = result as Record<string, Object>;
+      const rec = result as ESObject as Record<string, Object>;
       const candidates: Array<Object | undefined> = [
         rec['scanCodeRect'],
         rec['scanRect'],
@@ -207,7 +207,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       }
 
       this.originalValue = result.originalValue;
-      const resultMap = result as Record<string, Object>;
+      const resultMap = result as ESObject as Record<string, Object>;
       const frameHeight = Number(resultMap['frameHeight']);
       if (Number.isFinite(frameHeight) && frameHeight > 0) {
         this.yuvFrameHeight = Math.round(frameHeight);
@@ -469,9 +469,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         return {};
       }
 
-      if (typeof (rawArgs as Record<string, Object>).forEach === 'function') {
+      if (typeof (rawArgs as Record<string, Object>)['forEach'] === 'function') {
         const args: Record<string, Object> = {};
-        (rawArgs as Record<string, Object>).forEach((value: Object, key: string) => {
+        (rawArgs as ESObject).forEach((value: ESObject, key: string) => {
           args[key] = this.recursivelyConvertMap(value);
         });
         return args;
@@ -630,7 +630,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   };
 
   private extractScanType(result: scanBarcode.ScanResult): number {
-    const resultMap = result as Record<string, Object>;
+    const resultMap = result as ESObject as Record<string, Object>;
     const scanType = Number(resultMap['scanType']);
     if (Number.isFinite(scanType)) {
       return scanType;
@@ -832,9 +832,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     // 检查是否是 Map 对象(有 forEach 方法但不是数组)
     const objRecord = obj as Record<string, Object>;
-    if (typeof objRecord.forEach === 'function') {
+    if (typeof objRecord['forEach'] === 'function') {
       const converted: Record<string, Object> = {};
-      objRecord.forEach((value: Object, key: string) => {
+      (obj as ESObject).forEach((value: ESObject, key: string) => {
         converted[key] = this.recursivelyConvertMap(value);
       });
       return converted;
