@@ -26,19 +26,32 @@ import { getCurrentMLKitScannerView } from './MLKitScannerView';
 
 const TAG: string = '[MlkitScannerPlugin:]';
 
-/** MlkitScannerPlugin **/
+/**
+ * MlkitScannerPlugin - Flutter插件主入口
+ * 负责插件生命周期绑定、PlatformViewFactory注册与资源释放
+ * @implements FlutterPlugin, AbilityAware
+ */
 export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
   private pluginBinding: FlutterPluginBinding | null = null;
   private registeredFactory: boolean = false;
 
+  /** 获取插件唯一类名标识 */
   getUniqueClassName(): string {
     return TAG;
   }
 
+  /**
+   * 插件附加到Flutter引擎时回调，保存pluginBinding引用
+   * @param binding - Flutter插件绑定对象
+   */
   onAttachedToEngine(binding: FlutterPluginBinding): void {
     this.pluginBinding = binding;
   }
 
+  /**
+   * 插件从Flutter引擎分离时回调，兜底释放PlatformView资源
+   * @param binding - Flutter插件绑定对象
+   */
   onDetachedFromEngine(binding: FlutterPluginBinding): void {
     // 兜底保障：主动触发 PlatformView 资源释放
     try {
@@ -52,6 +65,10 @@ export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
     this.pluginBinding = null;
   }
 
+  /**
+   * Ability附加时回调，注册PlatformViewFactory
+   * @param binding - Ability插件绑定对象
+   */
   onAttachedToAbility(binding: AbilityPluginBinding): void {
     if (!binding || !this.pluginBinding) {
       return;
@@ -61,6 +78,7 @@ export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
     this.registeredFactory = true;
   }
 
+  /** Ability分离时回调，兜底释放PlatformView资源 */
   onDetachedFromAbility(): void {
     // PlatformViewRegistry API 不提供 unregisterViewFactory，
     // 在 Ability 分离时主动释放 PlatformView 资源作为兜底

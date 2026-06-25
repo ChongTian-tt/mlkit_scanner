@@ -187,18 +187,20 @@ await controller.setOhosCamera(
 
 > [!TIP] "OHOS 平台支持"列：yes 表示支持，no 表示不支持，partially 表示部分支持。
 
-| 名称 | 描述 | 类型 | 参数 | 返回值 | OHOS 平台支持 |
-| --- | --- | --- | --- | --- | --- |
-| toggleFlash | 切换设备闪光灯（需设备支持） | 方法 | 无 | `Future<void>` | yes |
-| startScan | 启动条码识别，并按 delay 间隔触发识别 | 方法 | `type: RecognitionType; delay: int`（毫秒） | `Future<void>` | yes |
-| cancelScan | 取消条码识别流程并保持预览 | 方法 | 无 | `Future<void>` | yes |
-| setDelay | 动态设置识别轮询间隔 | 方法 | `delay: int`（毫秒） | `Future<void>` | yes |
-| pauseCamera | 暂停相机预览（并暂停识别流程） | 方法 | 无 | `Future<void>` | yes |
-| resumeCamera | 恢复暂停后的相机预览与识别流程 | 方法 | 无 | `Future<void>` | yes |
-| setZoom | 设置相机变焦 | 方法 | `value: double`（0~1） | `Future<void>` | yes |
-| setCropArea | 设置识别裁剪区域（相对 CameraPreview） | 方法 | `rect: CropRect` | `Future<void>` | yes |
-| getOhosAvailableCameras | 获取当前设备可用的 OHOS 相机列表 | 方法 | 无 | `Future<List<OhosCamera>>` | yes |
-| setOhosCamera | 按位置与类型切换 OHOS 相机 | 方法 | `position: OhosCameraPosition; type: OhosCameraType` | `Future<void>` | yes |
+| 名称 | 描述 | 类型 | 参数 | 返回值 | 异常说明 | OHOS 平台支持 |
+| --- | --- | --- | --- | --- | --- | --- |
+| toggleFlash | 切换设备闪光灯（需设备支持） | 方法 | 无 | `Future<void>` | 设备无闪光灯时抛出 `PlatformException(code='4')` | yes |
+| startScan | 启动条码识别，并按 delay 间隔触发识别 | 方法 | `delay: int`（毫秒） | `Future<void>` | 相机未初始化时抛出 `PlatformException(code='3')` | yes |
+| cancelScan | 取消条码识别流程并保持预览 | 方法 | 无 | `Future<void>` | — | yes |
+| setDelay | 动态设置识别轮询间隔 | 方法 | `delay: int`（毫秒） | `Future<void>` | — | yes |
+| pauseCamera | 暂停相机预览（并暂停识别流程） | 方法 | 无 | `Future<void>` | — | yes |
+| resumeCamera | 恢复暂停后的相机预览与识别流程 | 方法 | 无 | `Future<void>` | 相机未初始化时抛出 `PlatformException(code='3')` | yes |
+| setZoom | 设置相机变焦 | 方法 | `value: double`（0~1） | `Future<void>` | 设备不支持缩放时抛出 `PlatformException(code='6')` | yes |
+| setCropArea | 设置识别裁剪区域（相对 CameraPreview） | 方法 | `rect: CropRect` | `Future<void>` | 参数无效时抛出 `PlatformException(code='5')` | yes |
+| getOhosAvailableCameras | 获取当前设备可用的 OHOS 相机列表 | 方法 | 无 | `Future<List<OhosCamera>>` | — | yes |
+| setOhosCamera | 按位置与类型切换 OHOS 相机 | 方法 | `position: OhosCameraPosition; type: OhosCameraType` | `Future<void>` | — | yes |
+
+> **异常码对照表**：`'1'` = 相机初始化失败，`'2'` = 相机权限被拒绝，`'3'` = 相机未初始化，`'4'` = 设备无闪光灯，`'5'` = 参数无效，`'6'` = 设备不支持缩放。
 
 ## 遗留问题
 

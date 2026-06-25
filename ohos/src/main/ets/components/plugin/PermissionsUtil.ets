@@ -24,7 +24,13 @@ import { Log } from '@ohos/flutter_ohos';
 
 const TAG: string = '[PermissionsUtil] :';
 
+/** 相机权限管理工具类 */
 export class PermissionsUtil {
+  /**
+   * 检查指定权限的访问令牌状态
+   * @param permission - 待检查的权限名称
+   * @returns 授权状态
+   */
   public static async checkAccessToken(permission: Permissions): Promise<abilityAccessCtrl.GrantStatus> {
     let atManager = abilityAccessCtrl.createAtManager();
     let grantStatus: abilityAccessCtrl.GrantStatus = abilityAccessCtrl.GrantStatus.PERMISSION_DENIED;
@@ -46,6 +52,12 @@ export class PermissionsUtil {
     return grantStatus;
   }
 
+  /**
+   * 向用户请求权限授权
+   * @param context - Ability上下文
+   * @param permission - 待请求的权限名称
+   * @returns 授权结果数组
+   */
   public static async reqPermissionsFromUser(context: Context, permission: Permissions): Promise<number[]> {
     let atManager = abilityAccessCtrl.createAtManager();
     let grantStatus: PermissionRequestResult = { permissions: [], authResults: [] };
@@ -57,7 +69,12 @@ export class PermissionsUtil {
     return grantStatus.authResults;
   }
 
-  // 申请权限
+  /**
+   * 申请相机权限，被拒绝时触发二次鉴权
+   * @param context - Ability上下文
+   * @param permission - 待申请的权限名称
+   * @returns 是否获得授权
+   */
   public static async requestCameraPermission(context: Context, permission: Permissions): Promise<boolean> {
     let valid = false;
     let grantStatus = await PermissionsUtil.reqPermissionsFromUser(context, permission);
@@ -73,7 +90,12 @@ export class PermissionsUtil {
   }
 
 
-  // 检查权限 初始化相机 开始扫描
+  /**
+   * 检查并请求相机权限，未授权时自动请求
+   * @param context - Ability上下文
+   * @param permission - 待检查的权限名称
+   * @returns 是否获得授权
+   */
   public static async checkAndRequestCameraPermission(context: Context, permission: Permissions): Promise<boolean> {
 
     let valid = false;
@@ -86,7 +108,12 @@ export class PermissionsUtil {
     return valid;
   }
 
-  // 二次鉴权
+  /**
+   * 二次鉴权，跳转设置页面让用户手动授权
+   * @param context - Ability上下文
+   * @param permission - 待授权的权限名称
+   * @returns 是否获得授权
+   */
   public static async reAuthentication(context: Context, permission: Permissions): Promise<boolean> {
     let atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
     try {

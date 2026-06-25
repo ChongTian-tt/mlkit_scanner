@@ -34,7 +34,7 @@ export class PluginConstants {
   static readonly SET_CROP_AREA_METHOD: string = 'setCropAreaMethod';
   static readonly GET_OHOS_AVAILABLE_CAMERAS_METHOD: string = 'getOhosAvailableCameras';
   static readonly SET_OHOS_CAMERA_METHOD: string = 'setOhosCamera';
-  static readonly SCAN_COMPONENT_WIDTH_100 = '100%';
+  static readonly SCAN_COMPONENT_WIDTH_100: string = '100%';
   // 预览尺寸的默认比例。初始化早期在尚未拿到真实相机 profile 前，先使用该比例占位。
   static readonly PREVIEW_RATIO_W: number = 9;
   static readonly PREVIEW_RATIO_H: number = 16;

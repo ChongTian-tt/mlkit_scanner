@@ -312,6 +312,10 @@ export class CameraService {
     return cameras[0]['cameraId'] as string;
   }
 
+  /**
+   * 创建相机设备，查询所有可用相机并缓存
+   * @param cameraManager - 相机管理器实例
+   */
   async createCamera(cameraManager: camera.CameraManager): Promise<void> {
     this.cameraManager = cameraManager;
     try {
@@ -324,6 +328,12 @@ export class CameraService {
     }
   }
 
+  /**
+   * 初始化相机，创建会话、配置预览并启动
+   * @param XComponentSurfaceId - XComponent渲染表面ID
+   * @param cameraId - 可选的相机设备ID，不传则使用默认相机
+   * @returns 初始化是否成功
+   */
   async initCamera(XComponentSurfaceId: string, cameraId?: string): Promise<boolean> {
     if (!this.safeLoadCameras() || !this.cameraManager) {
       Log.e(TAG, 'initCamera failed: camera manager unavailable');
@@ -429,6 +439,7 @@ export class CameraService {
     }
   }
 
+  /** 设置对焦模式 */
   setFocusMode(focusMode: camera.FocusMode): void {
     if (!this.photoSession) {
       return;
@@ -507,6 +518,7 @@ export class CameraService {
     }
   }
 
+  /** 获取闪光灯当前状态，异常时返回上次已知状态 */
   getFlashStatus(): boolean {
     if (!this.photoSession) {
       return this.getSharedFlashStatus();
@@ -526,6 +538,11 @@ export class CameraService {
     }
   }
 
+  /**
+   * 设置闪光灯模式
+   * @param result - Flutter方法结果回调，设备不支持时返回错误码'4'
+   * @param isOpen - 是否开启闪光灯
+   */
   setFlashMode(result: MethodResult | null, isOpen: boolean): void {
     if (!this.hasFlash()) {
       result?.success(isOpen);
@@ -550,6 +567,7 @@ export class CameraService {
     }
   }
 
+  /** 检查设备是否支持闪光灯 */
   hasFlash(): boolean {
     try {
       // 检测是否有闪光灯，返回是否支持闪光灯
@@ -561,6 +579,7 @@ export class CameraService {
     }
   }
 
+  /** 检查是否支持指定的闪光灯模式 */
   isFlashModeSupported(mode: camera.FlashMode): boolean {
     try {
       // 检测闪光灯模式是否支持
@@ -572,6 +591,7 @@ export class CameraService {
     }
   }
 
+  /** 获取缩放比率范围 [最小值, 最大值] */
   getZoomRatioRange(): Array<number> {
     if (!this.photoSession) {
       return [];
@@ -595,6 +615,11 @@ export class CameraService {
     }
   }
 
+  /**
+   * 设置归一化缩放值（0~1），映射到实际缩放比率
+   * @param normalized - 归一化缩放值（0~1）
+   * @returns 是否设置成功
+   */
   setZoomNormalized(normalized: number): boolean {
     if (!this.photoSession) {
       return false;
@@ -624,6 +649,7 @@ export class CameraService {
     }
   }
 
+  /** 停止相机预览 */
   async stopCamera(): Promise<void> {
     try {
       // 停止会话工作，通过注册回调函数获取结果
@@ -634,6 +660,10 @@ export class CameraService {
     }
   }
 
+  /**
+   * 前台释放准备，停止相机并释放部分会话资源
+   * @param isStop - 是否停止
+   */
   async preFrontRelease(isStop: boolean): Promise<void> {
     this.isStop = isStop;
     try {
@@ -644,6 +674,7 @@ export class CameraService {
     }
   }
 
+  /** 释放所有相机资源：取消事件订阅、释放会话、释放ImageReceiver、清空缓存 */
   async releaseCamera(): Promise<void> {
     try {
       this.isStop = true;
@@ -711,6 +742,14 @@ export class CameraService {
     this.imageReceiver.on('imageArrival', this.imageArrivalCallback);
   }
 
+  /**
+   * 使用ScanKit解码图像缓冲区中的条码
+   * @param imgComponent - 图像组件数据
+   * @param width - 图像宽度
+   * @param height - 图像高度
+   * @param scanCallback - 扫码结果回调
+   * @param nextImage - 待释放的Image对象
+   */
   async decodeImageBuffer(
     imgComponent: image.Component,
     width: number,

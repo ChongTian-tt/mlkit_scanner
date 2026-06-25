@@ -18,10 +18,19 @@ This Plugin uses Android CameraView library and iOS AVFoundation APIs for detect
 * Use camera Zoom 
 * Lock autofocus
 
-| Google MLKit APIs:             | Android | iOS |
-|--------------------------------|---------|-----|
-| Barcode scanning               |   ✅    | ✅ |
-| ------------------------       |    -    |  -  |
+| Google MLKit APIs:             | Android | iOS  | OHOS |
+|--------------------------------|---------|------|------|
+| Barcode scanning               |   ✅    | ✅  | ✅  |
+| ------------------------       |    -    |  -   |  -   |
+
+## OpenHarmony (OHOS) Support
+
+This plugin supports OpenHarmony platform. For detailed OHOS documentation, please refer to:
+
+- **English**: [README.OpenHarmony.md](README.OpenHarmony.md)
+- **中文**: [README.OpenHarmony_CN.md](README.OpenHarmony_CN.md)
+
+The OHOS implementation uses `@kit.ScanKit` for barcode decoding and `@kit.CameraKit` for camera management.
 
 ## Installation
 

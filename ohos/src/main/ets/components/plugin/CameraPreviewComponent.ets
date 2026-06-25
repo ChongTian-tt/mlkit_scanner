@@ -439,56 +439,60 @@ export struct CameraPreviewComponent {
 
   // 处理对焦触摸事件
   private handleFocusTouch(eventObj: TouchEvent): void {
-    if (!this.flutterMLKitScannerView || this.cameraWidth <= 0 || this.cameraHeight <= 0) {
-      return;
-    }
-    const touchType = readTouchType(eventObj);
-    const rawPoint = readTouchPoint(eventObj);
-    const point = rawPoint ? this.toPreviewPoint(rawPoint) : null;
-
-    // DOWN 事件时启动长按计时，满 500ms 立即触发锁定对焦（不再等待 UP）
-    if (touchType === PluginConstants.TOUCH_TYPE_DOWN && point) {
-      this.touchDownAtMs = Date.now();
-      this.isTouchPressed = true;
-      this.lockTriggeredInCurrentTouch = false;
-      this.startLongPressTimer();
-      return;
-    }
-
-    // UP 如果长按已触发，则只结束本次触摸；否则按轻触对焦处理
-    if (touchType === PluginConstants.TOUCH_TYPE_UP) {
-      if (!this.isTouchPressed || this.touchDownAtMs < 0) {
+    try {
+      if (!this.flutterMLKitScannerView || this.cameraWidth <= 0 || this.cameraHeight <= 0) {
         return;
       }
-      this.clearLongPressTimer();
-      this.isTouchPressed = false;
-      this.touchDownAtMs = -1;
+      const touchType = readTouchType(eventObj);
+      const rawPoint = readTouchPoint(eventObj);
+      const point = rawPoint ? this.toPreviewPoint(rawPoint) : null;
 
-      if (this.lockTriggeredInCurrentTouch) {
+      // DOWN 事件时启动长按计时，满 500ms 立即触发锁定对焦（不再等待 UP）
+      if (touchType === PluginConstants.TOUCH_TYPE_DOWN && point) {
+        this.touchDownAtMs = Date.now();
+        this.isTouchPressed = true;
+        this.lockTriggeredInCurrentTouch = false;
+        this.startLongPressTimer();
         return;
       }
-      const focusPoint = this.focusPointInPreviewCache;
-      if (!focusPoint) {
+
+      // UP 如果长按已触发，则只结束本次触摸；否则按轻触对焦处理
+      if (touchType === PluginConstants.TOUCH_TYPE_UP) {
+        if (!this.isTouchPressed || this.touchDownAtMs < 0) {
+          return;
+        }
+        this.clearLongPressTimer();
+        this.isTouchPressed = false;
+        this.touchDownAtMs = -1;
+
+        if (this.lockTriggeredInCurrentTouch) {
+          return;
+        }
+        const focusPoint = this.focusPointInPreviewCache;
+        if (!focusPoint) {
+          return;
+        }
+        // 轻触对焦：显示一次淡入淡出焦圈，不显示锁定图标，并以裁剪框中心作为统一焦点
+        this.updateFocusHint(false);
+        this.flutterMLKitScannerView.handleUserFocusGesture(
+          focusPoint.x,
+          focusPoint.y,
+          this.cameraWidth,
+          this.cameraHeight,
+          false,
+        );
         return;
       }
-      // 轻触对焦：显示一次淡入淡出焦圈，不显示锁定图标，并以裁剪框中心作为统一焦点
-      this.updateFocusHint(false);
-      this.flutterMLKitScannerView.handleUserFocusGesture(
-        focusPoint.x,
-        focusPoint.y,
-        this.cameraWidth,
-        this.cameraHeight,
-        false,
-      );
-      return;
-    }
 
-    // CANCEL 事件时清理状态和计时，避免残留状态影响下一次触摸
-    if (touchType === PluginConstants.TOUCH_TYPE_CANCEL) {
-      this.clearLongPressTimer();
-      this.isTouchPressed = false;
-      this.lockTriggeredInCurrentTouch = false;
-      this.touchDownAtMs = -1;
+      // CANCEL 事件时清理状态和计时，避免残留状态影响下一次触摸
+      if (touchType === PluginConstants.TOUCH_TYPE_CANCEL) {
+        this.clearLongPressTimer();
+        this.isTouchPressed = false;
+        this.lockTriggeredInCurrentTouch = false;
+        this.touchDownAtMs = -1;
+      }
+    } catch (error) {
+      Log.w(TAG, 'handleFocusTouch skipped: ' + JSON.stringify(error));
     }
   }
 

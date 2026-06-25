@@ -187,18 +187,20 @@ await controller.setOhosCamera(
 
 > [!TIP] "OHOS Support" column: yes means supported, no means not supported, partially means partially supported.
 
-| Name | Description | Type | Parameters | Return Value | OHOS Support |
-| --- | --- | --- | --- | --- | --- |
-| toggleFlash | Toggle device flash (device must support it) | Method | None | `Future<void>` | yes |
-| startScan | Start barcode recognition and detect at intervals of delay | Method | `type: RecognitionType; delay: int` (milliseconds) | `Future<void>` | yes |
-| cancelScan | Cancel recognition flow and keep preview | Method | None | `Future<void>` | yes |
-| setDelay | Dynamically set scan polling interval | Method | `delay: int` (milliseconds) | `Future<void>` | yes |
-| pauseCamera | Pause camera preview (and recognition flow) | Method | None | `Future<void>` | yes |
-| resumeCamera | Resume paused camera preview and recognition flow | Method | None | `Future<void>` | yes |
-| setZoom | Set camera zoom | Method | `value: double` (0~1) | `Future<void>` | yes |
-| setCropArea | Set recognition crop area (relative to CameraPreview) | Method | `rect: CropRect` | `Future<void>` | yes |
-| getOhosAvailableCameras | Get available OHOS camera list on the current device | Method | None | `Future<List<OhosCamera>>` | yes |
-| setOhosCamera | Switch OHOS camera by position and type | Method | `position: OhosCameraPosition; type: OhosCameraType` | `Future<void>` | yes |
+| Name | Description | Type | Parameters | Return Value | Exceptions | OHOS Support |
+| --- | --- | --- | --- | --- | --- | --- |
+| toggleFlash | Toggle device flash (device must support it) | Method | None | `Future<void>` | `PlatformException(code='4')` if device has no flash | yes |
+| startScan | Start barcode recognition and detect at intervals of delay | Method | `delay: int` (milliseconds) | `Future<void>` | `PlatformException(code='3')` if camera not initialized | yes |
+| cancelScan | Cancel recognition flow and keep preview | Method | None | `Future<void>` | — | yes |
+| setDelay | Dynamically set scan polling interval | Method | `delay: int` (milliseconds) | `Future<void>` | — | yes |
+| pauseCamera | Pause camera preview (and recognition flow) | Method | None | `Future<void>` | — | yes |
+| resumeCamera | Resume paused camera preview and recognition flow | Method | None | `Future<void>` | `PlatformException(code='3')` if camera not initialized | yes |
+| setZoom | Set camera zoom | Method | `value: double` (0~1) | `Future<void>` | `PlatformException(code='6')` if zoom not supported | yes |
+| setCropArea | Set recognition crop area (relative to CameraPreview) | Method | `rect: CropRect` | `Future<void>` | `PlatformException(code='5')` if invalid arguments | yes |
+| getOhosAvailableCameras | Get available OHOS camera list on the current device | Method | None | `Future<List<OhosCamera>>` | — | yes |
+| setOhosCamera | Switch OHOS camera by position and type | Method | `position: OhosCameraPosition; type: OhosCameraType` | `Future<void>` | — | yes |
+
+> **Exception Code Reference**: `'1'` = Camera initialization failed, `'2'` = Camera permission denied, `'3'` = Camera not initialized, `'4'` = Device has no flash, `'5'` = Invalid arguments, `'6'` = Zoom not supported.
 
 ## Known Issues
 
