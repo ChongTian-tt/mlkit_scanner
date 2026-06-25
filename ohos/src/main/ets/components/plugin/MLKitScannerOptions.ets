@@ -27,6 +27,12 @@ export class MLKitScannerOptions {
     this.periodMs = periodMs;
   }
 
+  /**
+   * 从键值对映射创建 MLKitScannerOptions 实例
+   * @param map - 包含 type 和 delay 字段的键值对
+   * @returns MLKitScannerOptions 实例
+   * @throws 参数无效时抛出 Error
+   */
   static fromMap(map: Record<string, Object>): MLKitScannerOptions {
     const typeCode = MLKitScannerOptions.requireInt(map, 'type');
     const delayCode = MLKitScannerOptions.requireInt(map, 'delay');

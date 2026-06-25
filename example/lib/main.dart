@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mlkit_scanner/mlkit_scanner.dart';
 
 void main() => runApp(MyApp());
@@ -19,6 +20,7 @@ class _MyAppState extends State<MyApp> {
     "100 milliseconds": 100,
     "500 milliseconds": 500,
     "2000 milliseconds": 2000,
+    "-1 (invalid)": -1,
   };
   BarcodeScannerController? _controller;
 
@@ -183,6 +185,11 @@ class _MyAppState extends State<MyApp> {
                           )
                         : _isOhos
                         ? const OhosScannerParameters(
+                            zoom: 0.3,
+                            camera: OhosCamera(
+                              position: OhosCameraPosition.back,
+                              type: OhosCameraType.CAMERA_TYPE_WIDE_ANGLE,
+                            ),
                             cropRect: CropRect(scaleHeight: 0.7, scaleWidth: 0.7),
                           )
                         : const AndroidScannerParameters(
@@ -204,6 +211,11 @@ class _MyAppState extends State<MyApp> {
                             await MLKitUtils().getOhosAvailableCameras();
                         _setNextCamera();
                       }
+                    },
+                    onCameraInitializeError: (error) {
+                      setState(() {
+                        _barcode = 'Camera init error: ${error.message} (code=${error.code})';
+                      });
                     },
                   ),
                 ),
@@ -319,6 +331,10 @@ class _MyAppState extends State<MyApp> {
               },
             ),
             TextButton(
+              child: const Text('Zoom 1.5 (assert)', textAlign: TextAlign.center),
+              onPressed: () => _controller?.setZoom(1.5),
+            ),
+            TextButton(
               child: Text(
                 'Crop: ${_getCropAreaDescription()}',
                 textAlign: TextAlign.center,
@@ -364,7 +380,15 @@ class _MyAppState extends State<MyApp> {
       child: SizedBox(
         width: 88,
         child: PopupMenuButton<int>(
-          onSelected: (delay) => _controller?.setDelay(delay),
+          onSelected: (delay) async {
+            try {
+              await _controller?.setDelay(delay);
+            } on PlatformException catch (e) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('setDelay error: ${e.message}')),
+              );
+            }
+          },
           child: const Text(
             'Set Delay',
             textAlign: TextAlign.center,

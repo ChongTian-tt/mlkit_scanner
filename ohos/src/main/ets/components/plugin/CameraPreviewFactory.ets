@@ -25,7 +25,14 @@ export class CameraPreviewFactory extends PlatformViewFactory {
     this.messenger = messenger;
   }
 
-  create(context: common.Context, viewId: number, args: ESObject): PlatformView {
+  /**
+   * 创建 PlatformView 实例
+   * @param context - Ability 上下文
+   * @param viewId - 平台视图 ID
+   * @param args - Flutter 传入的初始化参数
+   * @returns MLKitScannerView 实例
+   */
+  create(context: common.Context, viewId: number, args: Object): PlatformView {
     return new MLKitScannerView(context, this.messenger, viewId, args);
   }
 }

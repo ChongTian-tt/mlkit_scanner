@@ -129,7 +129,12 @@ export class CameraService {
   }
 
   private resolveCameraDevice(cameraId?: string): camera.CameraDevice | undefined {
-    if (!this.safeLoadCameras()) {
+    try {
+      if (!this.safeLoadCameras()) {
+        return undefined;
+      }
+    } catch (error) {
+      Log.e(TAG, 'resolveCameraDevice: ' + JSON.stringify(error));
       return undefined;
     }
     if (cameraId) {
@@ -210,9 +215,14 @@ export class CameraService {
     return resolvedSize;
   }
 
+  /**
+   * 安全加载相机列表，带缓存和错误处理
+   * @returns 是否成功加载相机列表
+   * @throws 当 context 不可用或相机管理器创建失败时抛出错误
+   */
   private safeLoadCameras(): boolean {
     if (!this.context) {
-      return false;
+      throw new Error('safeLoadCameras failed: context is not available');
     }
 
     const now = Date.now();
@@ -237,7 +247,7 @@ export class CameraService {
     } catch (error) {
       Log.e(TAG, 'safeLoadCameras failed: ' + JSON.stringify(error));
       this.camerasLoadedAtMs = 0;
-      return false;
+      throw new Error('safeLoadCameras failed: ' + JSON.stringify(error));
     }
   }
 
@@ -269,7 +279,9 @@ export class CameraService {
               if (!knownCameraIds.has(dev.cameraId)) {
                 knownCameraIds.add(dev.cameraId);
                 allDevices.push(dev);
-                Log.i(TAG, `queryAllCameraDevices: found cameraId=${dev.cameraId}, position=${dev.cameraPosition}, type=${dev.cameraType}`);
+                Log.i(TAG,
+                  `queryAllCameraDevices: found cameraId=${dev.cameraId}, ` +
+                  `position=${dev.cameraPosition}, type=${dev.cameraType}`);
               }
             }
           }
@@ -284,8 +296,13 @@ export class CameraService {
 
   // 获取可用的相机列表
   public getAvailableCameras(): Array<Record<string, number | string>> {
-    if (!this.safeLoadCameras()) {
-      Log.w(TAG, 'getAvailableCameras: safeLoadCameras failed, returning empty');
+    try {
+      if (!this.safeLoadCameras()) {
+        Log.w(TAG, 'getAvailableCameras: safeLoadCameras returned false, returning empty');
+        return [];
+      }
+    } catch (error) {
+      Log.e(TAG, 'getAvailableCameras: ' + JSON.stringify(error));
       return [];
     }
 
@@ -348,8 +365,13 @@ export class CameraService {
    * @returns 初始化是否成功
    */
   async initCamera(XComponentSurfaceId: string, cameraId?: string): Promise<boolean> {
-    if (!this.safeLoadCameras() || !this.cameraManager) {
-      Log.e(TAG, 'initCamera failed: camera manager unavailable');
+    try {
+      if (!this.safeLoadCameras() || !this.cameraManager) {
+        Log.e(TAG, 'initCamera failed: camera manager unavailable');
+        return false;
+      }
+    } catch (error) {
+      Log.e(TAG, 'initCamera safeLoadCameras failed: ' + JSON.stringify(error));
       return false;
     }
 
@@ -452,7 +474,11 @@ export class CameraService {
     }
   }
 
-  /** 设置对焦模式 */
+  /**
+   * 设置对焦模式
+   * @param focusMode - 对焦模式枚举值
+   * @returns 无返回值
+   */
   setFocusMode(focusMode: camera.FocusMode): void {
     if (!this.photoSession) {
       return;
@@ -500,6 +526,12 @@ export class CameraService {
    * 轻触/长按触发对焦。
    * needLock=true：切到对焦锁定
    * needLock=false：切回自动对焦
+   * @param x - 触点X坐标，相对于预览图像左上角
+   * @param y - 触点Y坐标，相对于预览图像左上角
+   * @param previewWidth - 预览图像宽度
+   * @param previewHeight - 预览图像高度
+   * @param needLock - 是否需要锁定焦点（长按为true，轻触为false）
+   * @returns 是否成功设置对焦点
    */
   focusAtPreviewPoint(
     x: number,
@@ -580,7 +612,10 @@ export class CameraService {
     }
   }
 
-  /** 检查设备是否支持闪光灯 */
+  /**
+   * 检查设备是否支持闪光灯
+   * @returns 是否支持闪光灯
+   */
   hasFlash(): boolean {
     try {
       // 检测是否有闪光灯，返回是否支持闪光灯
@@ -592,7 +627,11 @@ export class CameraService {
     }
   }
 
-  /** 检查是否支持指定的闪光灯模式 */
+  /**
+   * 检查是否支持指定的闪光灯模式
+   * @param mode - 闪光灯模式枚举值
+   * @returns 是否支持该闪光灯模式
+   */
   isFlashModeSupported(mode: camera.FlashMode): boolean {
     try {
       // 检测闪光灯模式是否支持
@@ -604,7 +643,10 @@ export class CameraService {
     }
   }
 
-  /** 获取缩放比率范围 [最小值, 最大值] */
+  /**
+   * 获取缩放比率范围 [最小值, 最大值]
+   * @returns 缩放比率范围数组，空数组表示不支持或不可用
+   */
   getZoomRatioRange(): Array<number> {
     if (!this.photoSession) {
       return [];

@@ -24,14 +24,14 @@ import { CameraPreviewFactory } from './CameraPreviewFactory';
 import { PluginConstants } from './PluginConstants';
 import { getCurrentMLKitScannerView } from './MLKitScannerView';
 
-const TAG: string = '[MlkitScannerPlugin:]';
+const TAG: string = '[MLKitScannerPlugin:]';
 
 /**
- * MlkitScannerPlugin - Flutter插件主入口
+ * MLKitScannerPlugin - Flutter插件主入口
  * 负责插件生命周期绑定、PlatformViewFactory注册与资源释放
  * @implements FlutterPlugin, AbilityAware
  */
-export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
+export default class MLKitScannerPlugin implements FlutterPlugin, AbilityAware {
   private pluginBinding: FlutterPluginBinding | null = null;
   private registeredFactory: boolean = false;
 
@@ -74,7 +74,9 @@ export default class MlkitScannerPlugin implements FlutterPlugin, AbilityAware {
       return;
     }
     const factory: PlatformViewFactory = new CameraPreviewFactory(this.pluginBinding.getBinaryMessenger());
-    this.pluginBinding.getPlatformViewRegistry().registerViewFactory(PluginConstants.CAMERA_PLATFORM_VIEW_NAME, factory);
+    this.pluginBinding.getPlatformViewRegistry().registerViewFactory(
+      PluginConstants.CAMERA_PLATFORM_VIEW_NAME, factory
+    );
     this.registeredFactory = true;
   }
 

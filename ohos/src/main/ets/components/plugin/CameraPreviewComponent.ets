@@ -186,14 +186,26 @@ export struct CameraPreviewComponent {
     this.unRegisterLifecycle();
   }
 
+  /**
+   * 获取当前 XComponent 的 SurfaceId
+   * @returns SurfaceId 字符串
+   */
   getSurfaceId(): string {
     return this.surfaceId;
   }
 
+  /**
+   * 设置扫描激活状态，控制覆盖层边框颜色
+   * @param active - 是否激活扫描
+   */
   setScanActive(active: boolean): void {
     this.isActive = active;
   }
 
+  /**
+   * 获取当前扫描是否激活
+   * @returns 扫描激活状态
+   */
   getScanActive(): boolean {
     return this.isActive;
   }
@@ -273,6 +285,10 @@ export struct CameraPreviewComponent {
     }
   }
 
+  /**
+   * 初始化相机预览请求，检查权限并尝试初始化 ScanKit
+   * 权限被拒绝时通过 MethodResult 返回错误
+   */
   async onInitCameraPreviewRequested(): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (!this.flutterMLKitScannerView || !this.flutterMLKitScannerView.methodResult) {
@@ -323,6 +339,10 @@ export struct CameraPreviewComponent {
     }
   }
 
+  /**
+   * 应用裁剪矩形，更新 XComponent 尺寸、偏移位置和裁剪区域状态
+   * 根据 previewSize 和 containerSize 计算居中裁剪偏移，同步刷新对焦几何和锁定图标位置
+   */
   applyCropRect() {
     try {
       if (!this.flutterMLKitScannerView) {

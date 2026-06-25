@@ -92,7 +92,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private isFrameListenerBound: boolean = false;
   private isPreviewStarting: boolean = false;
 
-  constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: ESObject) {
+  constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: Object) {
     super();
     flutterMLKitScannerView = this;
     this.context = context;
@@ -107,7 +107,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!this.context) {
       return null;
     }
-    const ohosContext = this.context as ESObject as Context;
+    const ohosContext = this.context;
     return new CameraService(
       ohosContext,
       () => this.flashLightStatusBeforePause,
@@ -150,7 +150,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   private extractScanRect(result: scanBarcode.ScanResult): ScanRectLike | null {
     try {
-      const rec = result as ESObject as Record<string, Object>;
+      const rec = result as Record<string, Object>;
       const candidates: Array<Object | undefined> = [
         rec['scanCodeRect'],
         rec['scanRect'],
@@ -207,7 +207,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       }
 
       this.originalValue = result.originalValue;
-      const resultMap = result as ESObject as Record<string, Object>;
+      const resultMap = result as Record<string, Object>;
       const frameHeight = Number(resultMap['frameHeight']);
       if (Number.isFinite(frameHeight) && frameHeight > 0) {
         this.yuvFrameHeight = Math.round(frameHeight);
@@ -458,16 +458,20 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.previewState.isRunning = false;
   }
 
-  // 归一化参数
-  private normalizeArgs(rawArgs: ESObject): Record<string, Object> {
+  /**
+   * 归一化参数，将框架传入的 Object 转换为强类型 Record
+   * @param rawArgs - 原始参数对象
+   * @returns 归一化后的键值对
+   */
+  private normalizeArgs(rawArgs: Object): Record<string, Object> {
     try {
       if (!rawArgs || typeof rawArgs !== 'object') {
         return {};
       }
 
-      if (typeof rawArgs.forEach === 'function') {
+      if (typeof (rawArgs as Record<string, Object>).forEach === 'function') {
         const args: Record<string, Object> = {};
-        rawArgs.forEach((value: ESObject, key: string) => {
+        (rawArgs as Record<string, Object>).forEach((value: Object, key: string) => {
           args[key] = this.recursivelyConvertMap(value);
         });
         return args;
@@ -516,7 +520,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return { width, height };
   }
 
-  private parsePreviewSize(args: ESObject): Size {
+  private parsePreviewSize(args: Object): Size {
     const raw = this.parsePositiveSize(this.normalizeArgs(args));
     if (!raw) {
       this.containerSize = { width: 376, height: 200 };
@@ -626,7 +630,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   };
 
   private extractScanType(result: scanBarcode.ScanResult): number {
-    const resultMap = result as ESObject as Record<string, Object>;
+    const resultMap = result as Record<string, Object>;
     const scanType = Number(resultMap['scanType']);
     if (Number.isFinite(scanType)) {
       return scanType;
@@ -781,7 +785,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
     this.methodResult = result;
 
-    const rawArgsMap: ESObject = call.args as ESObject;
+    const rawArgsMap: Object = call.args;
     const args = this.normalizeArgs(rawArgsMap);
     this.initialScannerParameters = (args && (args as OhosScannerParameters)) || null;
     const initialZoom = this.initialScannerParameters?.initialZoom;
@@ -807,8 +811,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  // 递归转换映射
-  private recursivelyConvertMap(obj: ESObject): Object {
+  /**
+   * 递归转换映射，将 Map 或嵌套对象转换为 Record<string, Object>
+   * @param obj - 待转换的对象
+   * @returns 转换后的对象
+   */
+  private recursivelyConvertMap(obj: Object): Object {
     if (obj === null || typeof obj !== 'object') {
       return obj;
     }
@@ -823,9 +831,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
 
     // 检查是否是 Map 对象(有 forEach 方法但不是数组)
-    if (typeof (obj as ESObject).forEach === 'function') {
+    const objRecord = obj as Record<string, Object>;
+    if (typeof objRecord.forEach === 'function') {
       const converted: Record<string, Object> = {};
-      (obj as ESObject).forEach((value: ESObject, key: string) => {
+      objRecord.forEach((value: Object, key: string) => {
         converted[key] = this.recursivelyConvertMap(value);
       });
       return converted;
@@ -836,7 +845,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     const keys = Object.keys(obj);
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      converted[key] = this.recursivelyConvertMap(obj[key]);
+      converted[key] = this.recursivelyConvertMap(objRecord[key]);
     }
     return converted;
   }
@@ -943,7 +952,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 开启扫描,开启预览流
   private async startScan(call: MethodCall, result: MethodResult): Promise<void> {
-    const args = this.normalizeArgs(call.args as ESObject);
+    const args = this.normalizeArgs(call.args);
     let options: MLKitScannerOptions;
     try {
       options = MLKitScannerOptions.fromMap(args);
@@ -1016,8 +1025,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   private setScanDelay(call: MethodCall, result: MethodResult): void {
     // 设置扫描延迟
-    const delay: ESObject = call.args as ESObject;
-    if (typeof delay !== 'number' || !Number.isFinite(delay)) {
+    const delay: Object = call.args;
+    const delayNum: number = Number(delay);
+    if (!Number.isFinite(delayNum)) {
       result.error(
         PluginError.INVALID_ARGUMENTS,
         'Invalid argument passed, Number type is expected',
@@ -1025,7 +1035,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       );
       return;
     }
-    if (delay < 0) {
+    if (delayNum < 0) {
       result.error(
         PluginError.INVALID_ARGUMENTS,
         'Invalid argument passed, value must be >= 0',
@@ -1034,7 +1044,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
     // 将扫描延迟设置为传入值的整数部分
-    this.scanDelayMs = Math.trunc(delay);
+    this.scanDelayMs = Math.trunc(delayNum);
     // 同步更新 CameraService 的解码节流间隔,保持底层解码频率与上层扫描延迟一致
     this.getCameraService()?.setDecodeThrottleMs(this.scanDelayMs);
     result.success(true);
@@ -1042,7 +1052,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 更新预览约束,如果新的预览尺寸与当前相同则直接返回成功,否则更新预览尺寸并应用新的约束,如果相机未初始化则返回错误
   private updateConstraints(call: MethodCall, result: MethodResult): void {
-    const args = this.normalizeArgs(call.args as ESObject);
+    const args = this.normalizeArgs(call.args);
     const rawSize = this.parsePositiveSize(args);
     if (!rawSize) {
       result.error(
@@ -1185,7 +1195,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  private parseZoomValue(args: ESObject): number | null {
+  private parseZoomValue(args: Object): number | null {
     if (args === null || args === undefined) {
       return null;
     }
@@ -1228,7 +1238,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       );
       return;
     }
-    const zoom = this.parseZoomValue(call.args as ESObject);
+    const zoom = this.parseZoomValue(call.args);
     if (zoom === null || zoom < 0 || zoom > 1) {
       result.error(
         PluginError.INVALID_ARGUMENTS,
@@ -1255,7 +1265,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 设置扫描区域
   private setCropArea(call: MethodCall, result: MethodResult): void {
-    const rawArgsMap: ESObject = call.args as ESObject;
+    const rawArgsMap: Object = call.args;
     const args = this.normalizeArgs(rawArgsMap);
     const scaleWidth = Number(args['scaleWidth']);
     const scaleHeight = Number(args['scaleHeight']);
@@ -1308,10 +1318,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       const devices = service.getAvailableCameras();
       const available: Array<Record<string, number>> = [];
       for (const device of devices) {
-        const item = device as ESObject as OhosCameraItem;
+        const position = Number(device['position']);
+        const type = Number(device['type']);
         available.push({
-          'position': item.position,
-          'type': item.type,
+          'position': position,
+          'type': type,
         });
       }
       result.success(available);
@@ -1321,7 +1332,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   private setOhosCamera(call: MethodCall, result: MethodResult): void {
-    const args = this.normalizeArgs(call.args as ESObject);
+    const args = this.normalizeArgs(call.args);
     const position = Number(args['position']);
     const type = Number(args['type']);
     Log.i(TAG, `setOhosCamera called: position=${position}, type=${type}`);

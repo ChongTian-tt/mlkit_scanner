@@ -32,7 +32,7 @@ export class PermissionsUtil {
    * @returns 授权状态
    */
   public static async checkAccessToken(permission: Permissions): Promise<abilityAccessCtrl.GrantStatus> {
-    let atManager = abilityAccessCtrl.createAtManager();
+    let atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
     let grantStatus: abilityAccessCtrl.GrantStatus = abilityAccessCtrl.GrantStatus.PERMISSION_DENIED;
     let tokenId: number = 0;
     try {
@@ -59,7 +59,7 @@ export class PermissionsUtil {
    * @returns 授权结果数组
    */
   public static async reqPermissionsFromUser(context: Context, permission: Permissions): Promise<number[]> {
-    let atManager = abilityAccessCtrl.createAtManager();
+    let atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
     let grantStatus: PermissionRequestResult = { permissions: [], authResults: [] };
     try {
       grantStatus = await atManager.requestPermissionsFromUser(context, [permission]);
@@ -76,8 +76,8 @@ export class PermissionsUtil {
    * @returns 是否获得授权
    */
   public static async requestCameraPermission(context: Context, permission: Permissions): Promise<boolean> {
-    let valid = false;
-    let grantStatus = await PermissionsUtil.reqPermissionsFromUser(context, permission);
+    let valid: boolean = false;
+    let grantStatus: number[] = await PermissionsUtil.reqPermissionsFromUser(context, permission);
     let length: number = grantStatus.length;
     for (let i = 0; i < length; i++) {
       if (grantStatus[i] === 0) {
@@ -98,8 +98,8 @@ export class PermissionsUtil {
    */
   public static async checkAndRequestCameraPermission(context: Context, permission: Permissions): Promise<boolean> {
 
-    let valid = false;
-    let grantStatus = await PermissionsUtil.checkAccessToken(permission);
+    let valid: boolean = false;
+    let grantStatus: abilityAccessCtrl.GrantStatus = await PermissionsUtil.checkAccessToken(permission);
     if (grantStatus === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
       valid = true;
     } else {
