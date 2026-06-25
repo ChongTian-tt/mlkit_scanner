@@ -419,12 +419,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    */
   setSurfaceId(surfaceId: string) {
     this.surfaceId = surfaceId;
-    // 同步等待预览启动,确保surfaceId设置后预览可用
-    this.startPreview();
+    // 触发相机预览启动（异步，不阻塞当前方法）
+    void this.startPreview();
   }
 
   /**
-   * 设置相机设置相机初始化状态,初始化成功时触发预览
+   * 设置相机初始化状态,初始化成功时触发预览
    * @param isCameraInitialized - 是否已初始化
    */
   setCameraInitialized(isCameraInitialized: boolean) {
@@ -432,7 +432,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (isCameraInitialized) {
       this.beginPreviewSession();
       this.bindFrameListener();
-      this.startPreview();
+      void this.startPreview();
     }
   }
 
@@ -680,8 +680,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
         Log.e(TAG, `startPreview failed: initCamera returned false, cameraId=${this.selectedCameraId}`);
         return;
       }
-      // initCamera 可能创建新 ImageReceiver,需重置帧监听绑定标志确保重新绑定
-      this.isFrameListenerBound = false;
+      // 如果 ensureImageReceiver 创建了新 ImageReceiver，需重置帧监听绑定标志
+      if (service.imageReceiverRecreated) {
+        this.isFrameListenerBound = false;
+      }
       this.bindFrameListener();
       this.beginPreviewSession();
       this.applyDesiredZoomIfPossible();

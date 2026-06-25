@@ -52,6 +52,9 @@ export class CameraService {
   public imageReceiver: image.ImageReceiver;
   // 标记是否已释放 ImageReceiver，避免重复释放导致错误
   private isImageReceiverReleased: boolean = false;
+  // ImageReceiver 是否在上一次 ensureImageReceiver 调用中被重建
+  // 如果被重建，调用方需重置帧监听绑定标志以重新绑定回调
+  public imageReceiverRecreated: boolean = false;
   // 当前预览配置的尺寸，单位是像素。初始值为默认预览尺寸，后续会根据实际相机 profile 更新。
   private previewProfileSize: Size = {
     width: PluginConstants.DEFAULT_PREVIEW_WIDTH,
@@ -83,6 +86,11 @@ export class CameraService {
   }
 
   // 外部调用以更新预览配置时，确保 ImageReceiver 的尺寸和格式与预览输出匹配，否则可能导致无法正确接收预览帧。
+  /**
+   * 确保ImageReceiver可用，如果尺寸变化则创建新的
+   * 创建新 ImageReceiver 前会取消旧事件订阅，重建后设置 imageReceiverRecreated=true
+   * @param size - 期望的预览尺寸
+   */
   private async ensureImageReceiver(size: Size): Promise<void> {
     if (
       !this.isImageReceiverReleased &&
@@ -92,9 +100,13 @@ export class CameraService {
       return;
     }
 
+    // 创建新 ImageReceiver 前，先取消旧的事件订阅，防止回调在释放后触发
+    this.offImageArrival();
+
     try {
       if (!this.isImageReceiverReleased) {
         await this.imageReceiver.release();
+        this.isImageReceiverReleased = true;
       }
     } catch (error) {
       Log.w(TAG, 'ensureImageReceiver release skipped: ' + JSON.stringify(error));
@@ -106,6 +118,7 @@ export class CameraService {
     };
     this.imageReceiver = this.createImageReceiver(this.previewProfileSize, image.ImageFormat.JPEG, 1);
     this.isImageReceiverReleased = false;
+    this.imageReceiverRecreated = true;
   }
 
   private getPreviewProfileCacheKey(cameraId?: string): string {
