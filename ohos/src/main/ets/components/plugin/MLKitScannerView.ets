@@ -555,6 +555,46 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return this.initialScannerParameters?.initialCropRect ?? null;
   }
 
+  // ScanKit scanType → MLKit BarcodeFormat 映射表
+  // ScanKit 返回的 scanType 码与 MLKit 的 BarcodeFormat 码完全不同，
+  // 直接传给 Flutter 会导致条码格式被误判（如 QR 扫码结果被识别为 code128）
+  private static readonly SCAN_TYPE_TO_BARCODE_FORMAT: Record<number, number> = {
+    0: 0,     // ALL → unknown
+    1: 256,   // QR_CODE → qrCode
+    2: 4096,  // AZTEC → aztec
+    3: 16,    // DATA_MATRIX → dataMatrix
+    4: 2048,  // PDF417 → pdf417
+    5: 1,     // CODE_128 → code128
+    6: 2,     // CODE_39 → code39
+    7: 4,     // CODE_93 → code93
+    8: 8,     // CODABAR → codabar
+    9: 32,    // EAN_13 → ean13
+    10: 64,   // EAN_8 → ean8
+    11: 128,  // ITF → itf
+    12: 512,  // UPC_A → upcA
+    13: 1024, // UPC_E → upcE
+  };
+
+  // 基于条码格式推断 value_type（ScanKit 不提供值类型分类，需自行推断）
+  // 参考 MLKit BarcodeValueType 编码：0=unknown, 1=contactInfo, 2=email, 3=isbn,
+  // 4=phone, 5=product, 6=sms, 7=text, 8=url, 9=wifi, 10=geo, 11=calendarEvent, 12=driverLicense
+  private static readonly BARCODE_FORMAT_TO_VALUE_TYPE: Record<number, number> = {
+    0: 0,     // unknown → unknown
+    1: 7,     // code128 → text（一维码默认为文本）
+    2: 7,     // code39 → text
+    4: 7,     // code93 → text
+    8: 7,     // codabar → text
+    16: 7,    // dataMatrix → text（二维码默认为文本）
+    32: 5,    // ean13 → product（商品码）
+    64: 5,    // ean8 → product（商品码）
+    128: 5,   // itf → product（商品码）
+    256: 7,   // qrCode → text（QR 码默认文本，URL 场景由应用层判断）
+    512: 5,   // upcA → product（商品码）
+    1024: 5,  // upcE → product（商品码）
+    2048: 7,  // pdf417 → text
+    4096: 7,  // aztec → text
+  };
+
   private extractScanType(result: scanBarcode.ScanResult): number {
     const resultMap = result as ESObject as Record<string, Object>;
     const scanType = Number(resultMap['scanType']);
@@ -572,12 +612,16 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   private emitScanResult(result: scanBarcode.ScanResult): void {
     const scanType = this.extractScanType(result);
+    // 将 ScanKit scanType 转换为 MLKit BarcodeFormat 码
+    const mappedFormat = MLKitScannerView.SCAN_TYPE_TO_BARCODE_FORMAT[scanType] ?? 0;
+    // 基于条码格式推断 value_type（ScanKit 不提供值类型分类）
+    const valueType = MLKitScannerView.BARCODE_FORMAT_TO_VALUE_TYPE[mappedFormat] ?? 0;
     // 将扫码解析后的结果回传flutter
     this.channel?.invokeMethod(PluginConstants.SCAN_RESULT_METHOD, {
       raw_value: result.originalValue,
       display_value: result.originalValue,
-      format: scanType,
-      value_type: 0,
+      format: mappedFormat,
+      value_type: valueType,
     });
   }
 

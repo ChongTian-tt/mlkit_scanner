@@ -24,6 +24,9 @@ class MlKitChannel {
   static const _setCropAreaMethod = 'setCropAreaMethod';
   static const _getIosAvailableCameras = 'getIosAvailableCameras';
   static const _setIosCamera = 'setIosCamera';
+  // OHOS 专用方法通道名，与 iOS 分离，避免命名混淆
+  static const _getOhosAvailableCameras = 'getOhosAvailableCameras';
+  static const _setOhosCamera = 'setOhosCamera';
 
   static MlKitChannel? _instance;
   final MethodChannel _channel = const MethodChannel('mlkit_channel');
@@ -164,7 +167,7 @@ class MlKitChannel {
   /// Gets all available OHOS cameras.
   Future<List<OhosCamera>> getOhosAvailableCameras() async {
     final availableCameras =
-        (await _channel.invokeListMethod<dynamic>(_getIosAvailableCameras))!;
+        (await _channel.invokeListMethod<dynamic>(_getOhosAvailableCameras))!;
     return availableCameras
         .map((json) => OhosCamera.fromJson(Map<String, dynamic>.from(json)))
         .toList();
@@ -175,7 +178,7 @@ class MlKitChannel {
     required OhosCameraPosition position,
     required OhosCameraType type,
   }) {
-    return _channel.invokeMethod(_setIosCamera, {
+    return _channel.invokeMethod(_setOhosCamera, {
       'position': position.code,
       'type': type.code,
     });
