@@ -148,31 +148,34 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.previewSourceSize = this.normalizePreviewSourceSizeForDisplay(nextSize);
   }
 
+  /**
+   * 将 ScanResult 转换为 Record<string, Object> 以访问未在类型声明中暴露的属性。
+   * ScanResult 实际运行时属性：
+   * scanType, originalValue, scanCodeRect, cornerPoints, isGS1, frameHeight
+   */
+  private scanResultToRecord(result: scanBarcode.ScanResult): Record<string, Object> {
+    return result as ESObject as Record<string, Object>;
+  }
+
   private extractScanRect(result: scanBarcode.ScanResult): ScanRectLike | null {
     try {
-      const rec = result as ESObject as Record<string, Object>;
-      const candidates: Array<Object | undefined> = [
-        rec['scanCodeRect'],
-        rec['scanRect'],
-        rec['borderRect'],
-      ];
-      for (const item of candidates) {
-        if (!item || typeof item !== 'object') {
-          continue;
-        }
-        const rect = item as Record<string, Object>;
-        const left = Number(rect['left']);
-        const top = Number(rect['top']);
-        const right = Number(rect['right']);
-        const bottom = Number(rect['bottom']);
-        if ([left, top, right, bottom].every((n) => Number.isFinite(n))) {
-          return {
-            left,
-            top,
-            right,
-            bottom
-          } as ScanRectLike;
-        }
+      const rec = this.scanResultToRecord(result);
+      const scanCodeRect = rec['scanCodeRect'];
+      if (!scanCodeRect || typeof scanCodeRect !== 'object') {
+        return null;
+      }
+      const rect = scanCodeRect as Record<string, Object>;
+      const left = Number(rect['left']);
+      const top = Number(rect['top']);
+      const right = Number(rect['right']);
+      const bottom = Number(rect['bottom']);
+      if ([left, top, right, bottom].every((n) => Number.isFinite(n))) {
+        return {
+          left,
+          top,
+          right,
+          bottom
+        } as ScanRectLike;
       }
       return null;
     } catch (error) {
@@ -207,7 +210,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       }
 
       this.originalValue = result.originalValue;
-      const resultMap = result as ESObject as Record<string, Object>;
+      const resultMap = this.scanResultToRecord(result);
       const frameHeight = Number(resultMap['frameHeight']);
       if (Number.isFinite(frameHeight) && frameHeight > 0) {
         this.yuvFrameHeight = Math.round(frameHeight);
@@ -630,17 +633,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   };
 
   private extractScanType(result: scanBarcode.ScanResult): number {
-    const resultMap = result as ESObject as Record<string, Object>;
+    const resultMap = this.scanResultToRecord(result);
     const scanType = Number(resultMap['scanType']);
     if (Number.isFinite(scanType)) {
       return scanType;
     }
-
-    const format = Number(resultMap['format']);
-    if (Number.isFinite(format)) {
-      return format;
-    }
-
     return 0;
   }
 
@@ -1203,10 +1200,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (Number.isFinite(num)) {
       return num;
     }
-    const map = this.normalizeArgs(args) as Record<string, Object>;
-    const val = map['value'] ?? map['zoom'];
-    const n = Number(val);
-    return Number.isFinite(n) ? n : null;
+    return null;
   }
 
   /**
@@ -1331,36 +1325,33 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  private setOhosCamera(call: MethodCall, result: MethodResult): void {
-    const args = this.normalizeArgs(call.args);
+  /** 校验 setOhosCamera 的参数，无效时返回 null 并通过 result 报错 */
+  private validateSetOhosCameraArgs(args: Record<string, Object>, result: MethodResult): OhosInitialCamera | null {
     const position = Number(args['position']);
     const type = Number(args['type']);
-    Log.i(TAG, `setOhosCamera called: position=${position}, type=${type}`);
     if (!Number.isFinite(position) || !Number.isFinite(type)) {
       Log.e(TAG, `setOhosCamera invalid arguments: position=${position}, type=${type}`);
       result.error(PluginError.INVALID_ARGUMENTS, 'Invalid camera arguments, position/type required', null);
-      return;
+      return null;
     }
-
     if (!this.context) {
       Log.e(TAG, 'setOhosCamera failed: context is undefined');
       result.error(PluginError.INIT_CAMERA_ERROR, 'context is undefined!', null);
-      return;
+      return null;
     }
+    return { position: Math.trunc(position), type: Math.trunc(type) } as OhosInitialCamera;
+  }
 
-    const reqPosition = Math.trunc(position);
-    const reqType = Math.trunc(type);
-    Log.i(TAG, `setOhosCamera requesting: reqPosition=${reqPosition}, reqType=${reqType}`);
+  /** 通过 CameraService 查找目标 cameraId，找不到时返回空串 */
+  private queryCameraIdForSwitch(reqPosition: number, reqType: number, result: MethodResult): string {
     try {
       const service = this.getCameraService();
       if (!service) {
         Log.e(TAG, 'setOhosCamera failed: camera service is unavailable');
         result.error(PluginError.INIT_CAMERA_ERROR, 'camera service is unavailable', null);
-        return;
+        return '';
       }
-
       const cameraId = service.findCameraIdByOhosCodes(reqPosition, reqType);
-      Log.i(TAG, `setOhosCamera findCameraIdByOhosCodes result: cameraId=${cameraId}`);
       if (!cameraId) {
         Log.e(TAG, `setOhosCamera no camera matches: position=${reqPosition}, type=${reqType}`);
         result.error(
@@ -1368,37 +1359,38 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
           `No camera matches position=${reqPosition}, type=${reqType}`,
           null,
         );
-        return;
+        return '';
       }
-
-      this.selectedCameraId = cameraId;
-      Log.i(TAG, `setOhosCamera selectedCameraId updated to: ${cameraId}`);
+      return cameraId;
     } catch (error) {
       Log.e(TAG, 'setOhosCamera query camera list failed: ' + JSON.stringify(error));
       result.error(PluginError.INIT_CAMERA_ERROR, 'Failed to query camera list: ' + JSON.stringify(error), null);
+      return '';
+    }
+  }
+
+  private setOhosCamera(call: MethodCall, result: MethodResult): void {
+    const args = this.normalizeArgs(call.args);
+    const validated = this.validateSetOhosCameraArgs(args, result);
+    if (!validated) {
       return;
     }
 
-    this.selectedCameraPositionCode = reqPosition;
-    this.selectedCameraTypeCode = reqType;
-    Log.i(TAG,
-      `setOhosCamera state updated: cameraId=${this.selectedCameraId}, ` +
-      `positionCode=${this.selectedCameraPositionCode}, ` +
-      `typeCode=${this.selectedCameraTypeCode}, ` +
-      `isCameraInitialized=${this.isCameraInitialized}, ` +
-      `hasSurface=${!!this.surfaceId}, ` +
-      `isPausedByUser=${this.previewState.isPausedByUser}`);
+    const cameraId = this.queryCameraIdForSwitch(validated.position, validated.type, result);
+    if (!cameraId) {
+      return;
+    }
+    this.selectedCameraId = cameraId;
+    this.selectedCameraPositionCode = validated.position;
+    this.selectedCameraTypeCode = validated.type;
 
     getCurrentCameraPreviewComponent()?.applyCropRect();
 
     if (this.isCameraInitialized && this.surfaceId && !this.previewState.isPausedByUser) {
       Log.i(TAG, 'setOhosCamera restarting preview after camera switch');
       void this.restartPreviewAfterLayoutChange();
-    } else {
-      Log.i(TAG, 'setOhosCamera preview not restarted: camera will use new id on next startPreview');
     }
 
-    Log.i(TAG, 'setOhosCamera completed successfully');
     result.success(true);
   }
 

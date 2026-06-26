@@ -189,7 +189,11 @@ export class CameraService {
     }
   }
 
-  // 外部入口，通过 cameraId 查找相机设备 → 获取 Profile → 返回 Size
+  /**
+   * 通过 cameraId 查找相机设备，获取首选预览 Profile 并返回 Size
+   * @param cameraId - 可选的相机设备ID，不传则使用默认相机
+   * @returns 预览尺寸，未找到时返回 null
+   */
   public getPreferredPreviewSize(cameraId?: string): Size | null {
     const cacheKey = this.getPreviewProfileCacheKey(cameraId);
     const cachedProfile = this.preferredPreviewProfileCache[cacheKey];
@@ -294,7 +298,10 @@ export class CameraService {
     return allDevices;
   }
 
-  // 获取可用的相机列表
+  /**
+   * 获取可用的相机列表，包含 cameraId、position、type 信息
+   * @returns 相机信息数组
+   */
   public getAvailableCameras(): Array<Record<string, number | string>> {
     try {
       if (!this.safeLoadCameras()) {
@@ -322,7 +329,13 @@ export class CameraService {
     return result;
   }
 
-  // 根据 dart侧传入的 position 和 type，查找最匹配的 cameraId，优先级为 position+type > position > 任意可用
+  /**
+   * 根据 Dart 侧传入的 position 和 type，查找最匹配的 cameraId
+   * 优先级为 position+type > position > 任意可用
+   * @param positionCode - 相机位置编码
+   * @param typeCode - 相机类型编码
+   * @returns 匹配的 cameraId，无可用相机时返回 undefined
+   */
   public findCameraIdByOhosCodes(positionCode: number, typeCode: number): string | undefined {
     const cameras = this.getAvailableCameras();
     if (cameras.length === 0) {
@@ -382,17 +395,8 @@ export class CameraService {
     }
 
     try {
-      // 获取指定的相机设备对象支持的模式
-      const sceneModes = this.cameraManager.getSupportedSceneModes(this.currentCameraDevice);
-      const supportPhoto = sceneModes.indexOf(camera.SceneMode.NORMAL_PHOTO) >= 0;
-      if (!supportPhoto) {
-        Log.e(TAG, 'photo mode not supported');
-        return false;
-      }
-
-      const previewProfile = this.getPreferredPreviewProfile(this.currentCameraDevice);
+      const previewProfile = this.validateAndGetPreviewProfile();
       if (!previewProfile) {
-        Log.e(TAG, 'preview profile not found');
         return false;
       }
 
@@ -401,30 +405,7 @@ export class CameraService {
         height: previewProfile.size.height,
       });
 
-      // 创建一个预览输出对象，输出到 XComponentSurfaceId 以显示预览画面
-      this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, XComponentSurfaceId);
-      // 用于获取一个surface id供Camera或其他组件使用
-      const imageSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
-      // 创建第二个预览输出对象，输出到 imageReceiver 以获取预览帧进行扫码解码
-      this.previewOutput2 = this.cameraManager.createPreviewOutput(previewProfile, imageSurfaceId);
-      // 使用CameraDevice对象创建CameraInput实例
-      this.cameraInput = this.cameraManager.createCameraInput(this.currentCameraDevice);
-      // 打开相机
-      await this.cameraInput.open();
-
-      this.photoSession = this.cameraManager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.PhotoSession;
-      // 开始配置会话
-      this.photoSession.beginConfig();
-      // 把CameraInput加入到会话
-      this.photoSession.addInput(this.cameraInput);
-      // 把PreviewOutput加入到会话
-      this.photoSession.addOutput(this.previewOutput);
-      this.photoSession.addOutput(this.previewOutput2);
-      // 提交配置信息
-      await this.photoSession.commitConfig();
-      // 开始会话工作
-      await this.photoSession.start();
-      // 设置连续自动对焦模式
+      await this.configurePhotoSession(previewProfile, XComponentSurfaceId);
       this.setFocusMode(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO);
       this.isStop = false;
       return true;
@@ -432,6 +413,39 @@ export class CameraService {
       Log.e(TAG, 'initCamera failed: ' + JSON.stringify(error));
       return false;
     }
+  }
+
+  /** 校验相机模式并获取预览Profile */
+  private validateAndGetPreviewProfile(): camera.Profile | null {
+    const sceneModes = this.cameraManager!.getSupportedSceneModes(this.currentCameraDevice!);
+    const supportPhoto = sceneModes.indexOf(camera.SceneMode.NORMAL_PHOTO) >= 0;
+    if (!supportPhoto) {
+      Log.e(TAG, 'photo mode not supported');
+      return null;
+    }
+    const previewProfile = this.getPreferredPreviewProfile(this.currentCameraDevice!);
+    if (!previewProfile) {
+      Log.e(TAG, 'preview profile not found');
+      return null;
+    }
+    return previewProfile;
+  }
+
+  /** 配置相机会话：创建输入/输出、提交并启动 */
+  private async configurePhotoSession(previewProfile: camera.Profile, surfaceId: string): Promise<void> {
+    this.previewOutput = this.cameraManager!.createPreviewOutput(previewProfile, surfaceId);
+    const imageSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
+    this.previewOutput2 = this.cameraManager!.createPreviewOutput(previewProfile, imageSurfaceId);
+    this.cameraInput = this.cameraManager!.createCameraInput(this.currentCameraDevice!);
+    await this.cameraInput.open();
+
+    this.photoSession = this.cameraManager!.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.PhotoSession;
+    this.photoSession.beginConfig();
+    this.photoSession.addInput(this.cameraInput);
+    this.photoSession.addOutput(this.previewOutput);
+    this.photoSession.addOutput(this.previewOutput2);
+    await this.photoSession.commitConfig();
+    await this.photoSession.start();
   }
 
   private clearSessionRefs(): void {
@@ -848,7 +862,10 @@ export class CameraService {
     });
   }
 
-  // 设置解码节流间隔，与上层 scanDelayMs 对齐，最低 50ms 防止过于频繁解码
+  /**
+   * 设置解码节流间隔，与上层 scanDelayMs 对齐，最低 50ms 防止过于频繁解码
+   * @param ms - 节流间隔（毫秒），小于50会被自动调整为50
+   */
   setDecodeThrottleMs(ms: number): void {
     this.decodeThrottleMs = Math.max(ms, 50);
   }

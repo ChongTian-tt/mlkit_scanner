@@ -13,5 +13,5 @@
  * limitations under the License.
  */
 
-import MLKitScannerPlugin from './src/main/ets/components/plugin/MlkitScannerPlugin';
+import MLKitScannerPlugin from './src/main/ets/components/plugin/MLKitScannerPlugin';
 export default MLKitScannerPlugin;

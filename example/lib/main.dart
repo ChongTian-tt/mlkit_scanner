@@ -153,6 +153,30 @@ class _MyAppState extends State<MyApp> {
     setState(() {});
   }
 
+  // 边界测试：setZoom 超出 0~1 范围
+  void _testSetZoomBoundary(double value) {
+    () async {
+      try {
+        await _controller?.setZoom(value);
+        debugPrint('MLKitScanner: setZoom($value) succeeded unexpectedly');
+      } catch (e) {
+        debugPrint('MLKitScanner: setZoom($value) caught error: $e');
+      }
+    }();
+  }
+
+  // 边界测试：setScanDelay 传入负值
+  void _testSetScanDelayBoundary(int delay) {
+    () async {
+      try {
+        await _controller?.setDelay(delay);
+        debugPrint('MLKitScanner: setDelay($delay) succeeded unexpectedly');
+      } catch (e) {
+        debugPrint('MLKitScanner: setDelay($delay) caught error: $e');
+      }
+    }();
+  }
+
   String _getCropAreaDescription() {
     final cropRect = _cropAreaOptions[_currentCropAreaIndex];
     return '${(cropRect.scaleWidth * 100).toInt()}%x${(cropRect.scaleHeight * 100).toInt()}%';
@@ -242,133 +266,160 @@ class _MyAppState extends State<MyApp> {
               ],
             ),
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(8),
               child: Text(
                 _barcode,
                 style: const TextStyle(fontSize: 18),
               ),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                TextButton(
-                  child: const SizedBox(
-                    width: 88,
-                    child: Text(
-                      'Start scan',
-                      textAlign: TextAlign.center,
-                    ),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      TextButton(
+                        child: const SizedBox(
+                          width: 88,
+                          child: Text(
+                            'Start scan',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        onPressed: () => _controller?.startScan(100),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        child: const SizedBox(
+                          width: 88,
+                          child: Text(
+                            'Cancel scan',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        onPressed: () => _controller?.cancelScan(),
+                      ),
+                    ],
                   ),
-                  onPressed: () => _controller?.startScan(100),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  child: const SizedBox(
-                    width: 88,
-                    child: Text(
-                      'Cancel scan',
-                      textAlign: TextAlign.center,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      TextButton(
+                        child: const SizedBox(
+                          width: 88,
+                          child: Text(
+                            'Pause camera',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        onPressed: () => _controller?.pauseCamera(),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        child: const SizedBox(
+                          width: 88,
+                          child: Text(
+                            'Resume camera',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        onPressed: () => _controller?.resumeCamera(),
+                      ),
+                    ],
                   ),
-                  onPressed: () => _controller?.cancelScan(),
-                ),
-              ],
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                TextButton(
-                  child: const SizedBox(
-                    width: 88,
-                    child: Text(
-                      'Pause camera',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  onPressed: () => _controller?.pauseCamera(),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  child: const SizedBox(
-                    width: 88,
-                    child: Text(
-                      'Resume camera',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  onPressed: () => _controller?.resumeCamera(),
-                ),
-              ],
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                TextButton(
-                  child: const SizedBox(
-                    width: 88,
-                    child: Text(
-                      'Toggle flash',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  onPressed: () => _controller?.toggleFlash(),
-                ),
-                const SizedBox(width: 8),
-                _buildDelayButton(),
-              ],
-            ),
-            TextButton(
-              child: const SizedBox(
-                width: 88,
-                child: Text(
-                  'Zoom',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              onPressed: () {
-                _actualZoomIndex = _actualZoomIndex + 1 < _zoomValues.length ? _actualZoomIndex + 1 : 0;
-                _controller?.setZoom(_zoomValues[_actualZoomIndex]);
-              },
-            ),
-            TextButton(
-              child: const Text('Zoom 1.5 (assert)', textAlign: TextAlign.center),
-              onPressed: () => _controller?.setZoom(1.5),
-            ),
-            TextButton(
-              child: Text(
-                'Crop: ${_getCropAreaDescription()}',
-                textAlign: TextAlign.center,
-              ),
-              onPressed: _setNextCropArea,
-            ),
-            if (_supportsCameraSwitch)
-              Column(
-                children: [
-                  TextButton(
-                    child: Text(
-                      '$_cameraIndex: $_cameraPosition, $_cameraType',
-                      textAlign: TextAlign.center,
-                    ),
-                    onPressed: _setNextCamera,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      TextButton(
+                        child: const SizedBox(
+                          width: 88,
+                          child: Text(
+                            'Toggle flash',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        onPressed: () => _controller?.toggleFlash(),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildDelayButton(),
+                    ],
                   ),
                   TextButton(
-                    child: const Text(
-                      'Next rear camera type',
-                      textAlign: TextAlign.center,
+                    child: const SizedBox(
+                      width: 88,
+                      child: Text(
+                        'Zoom',
+                        textAlign: TextAlign.center,
+                      ),
                     ),
-                    // 在“后置镜头类型”内轮换，不切到前置镜头。
-                    onPressed: _setNextRearCameraType,
+                    onPressed: () {
+                      _actualZoomIndex = _actualZoomIndex + 1 < _zoomValues.length ? _actualZoomIndex + 1 : 0;
+                      () async {
+                        try {
+                          await _controller?.setZoom(_zoomValues[_actualZoomIndex]);
+                        } catch (e) {
+                          debugPrint('MLKitScanner: setZoom(${_zoomValues[_actualZoomIndex]}) failed: $e');
+                        }
+                      }();
+                    },
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      TextButton(
+                        child: const Text('Zoom -1', textAlign: TextAlign.center),
+                        onPressed: () => _testSetZoomBoundary(-1),
+                      ),
+                      TextButton(
+                        child: const Text('Zoom 1.5', textAlign: TextAlign.center),
+                        onPressed: () => _testSetZoomBoundary(1.5),
+                      ),
+                      TextButton(
+                        child: const Text('Delay -1', textAlign: TextAlign.center),
+                        onPressed: () => _testSetScanDelayBoundary(-1),
+                      ),
+                    ],
+                  ),
+                  TextButton(
                     child: Text(
-                      _getCameraListDescription(),
+                      'Crop: ${_getCropAreaDescription()}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12),
                     ),
+                    onPressed: _setNextCropArea,
                   ),
-                ],
+                  if (_supportsCameraSwitch)
+                    Column(
+                      children: [
+                        TextButton(
+                          child: Text(
+                            '$_cameraIndex: $_cameraPosition, $_cameraType',
+                            textAlign: TextAlign.center,
+                          ),
+                          onPressed: _setNextCamera,
+                        ),
+                        TextButton(
+                          child: const Text(
+                            'Next rear camera type',
+                            textAlign: TextAlign.center,
+                          ),
+                          // 在“后置镜头类型”内轮换，不切到前置镜头。
+                          onPressed: _setNextRearCameraType,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            _getCameraListDescription(),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
+            ),
           ],
         ),
       ),

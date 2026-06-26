@@ -28,7 +28,7 @@ export struct ScannerOverlay {
   @Prop @Watch('onPropChange') isActive: boolean = false;
   private isCanvasReady: boolean = false;
 
-  onPropChange() {
+  onPropChange(): void {
     if (this.isCanvasReady) {
       this.context.invalidate();
       this.onDraw();
@@ -115,7 +115,7 @@ export struct ScannerOverlay {
     return path;
   }
 
-  private onDraw() {
+  private onDraw(): void {
     try {
       const canvas = this.context.canvas;
       if (!canvas) {

@@ -81,72 +81,93 @@ export struct CameraPreviewComponent {
   // 锁定图标透明度状态
   @State lockIconOpacityState: number = 0;
 
+  /** 构建相机预览 XComponent */
+  @Builder
+  buildCameraPreview() {
+    XComponent({
+      id: 'componentId',
+      type: XComponentType.SURFACE,
+      controller: this.xComponentController,
+    })
+      .onLoad(() => {
+        this.onLoadHandle();
+      })
+      .width(this.cameraWidth)
+      .height(this.cameraHeight)
+      .backgroundColor(Color.White)
+      .position({
+        x: this.offsetX,
+        y: this.offsetY,
+      });
+  }
+
+  /** 构建扫描框遮罩 */
+  @Builder
+  buildScannerOverlay() {
+    if (this.cropRectState) {
+      ScannerOverlay({
+        cropRect: this.cropRectState,
+        isActive: this.isActive,
+      })
+        .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
+        .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
+        .position({ x: 0, y: 0 })
+        .id(
+          'scanner-overlay-' +
+          this.cropRectState.scaleWidth + '-' +
+          this.cropRectState.scaleHeight + '-' +
+          this.cropRectState.offsetX + '-' +
+          this.cropRectState.offsetY + '-' +
+          this.isActive,
+        )
+    }
+  }
+
+  /** 构建对焦环指示器 */
+  @Builder
+  buildFocusRing() {
+    if (this.showFocusRingState) {
+      Stack() {
+      }
+        .width(PluginConstants.FOCUS_RING_DIAMETER)
+        .height(PluginConstants.FOCUS_RING_DIAMETER)
+        .border({
+          width: PluginConstants.FOCUS_RING_STROKE,
+          color: Color.White,
+        })
+        .opacity(this.focusRingOpacityState)
+        .borderRadius(PluginConstants.FOCUS_RING_RADIUS)
+        .position({
+          x: this.focusRingLeftState,
+          y: this.focusRingTopState,
+        })
+    }
+  }
+
+  /** 构建锁定图标 */
+  @Builder
+  buildLockIcon() {
+    if (this.showLockIconState) {
+      Image($r('app.media.lock_fill'))
+        .align(Alignment.TopStart)
+        .width(PluginConstants.LOCK_ICON_SIZE)
+        .height(PluginConstants.LOCK_ICON_SIZE)
+        .opacity(this.lockIconOpacityState)
+        .position({
+          x: this.lockIconLeftState,
+          y: this.lockIconTopState,
+        })
+        .draggable(false)
+    }
+  }
+
   build() {
     Stack() {
       if (this.flutterMLKitScannerView && this.canRenderCamera) {
-        XComponent({
-          id: 'componentId',
-          type: XComponentType.SURFACE,
-          controller: this.xComponentController,
-        })
-          .onLoad(() => {
-            this.onLoadHandle();
-          })
-          .width(this.cameraWidth)
-          .height(this.cameraHeight)
-          .backgroundColor(Color.White)
-          .position({
-            x: this.offsetX,
-            y: this.offsetY,
-          });
-        // overlay 覆盖可见区域（crop 坐标相对于可见预览区域）
-        if (this.cropRectState) {
-          ScannerOverlay({
-            cropRect: this.cropRectState,
-            isActive: this.isActive,
-          })
-            .width(PluginConstants.SCAN_COMPONENT_WIDTH_100)
-            .height(PluginConstants.SCAN_COMPONENT_WIDTH_100)
-            .position({ x: 0, y: 0 })
-            .id(
-              'scanner-overlay-' +
-              this.cropRectState.scaleWidth + '-' +
-              this.cropRectState.scaleHeight + '-' +
-              this.cropRectState.offsetX + '-' +
-              this.cropRectState.offsetY + '-' +
-              this.isActive,
-            )
-        }
-        // 对焦环
-        if (this.showFocusRingState) {
-          Stack() {
-          }
-            .width(PluginConstants.FOCUS_RING_DIAMETER)
-            .height(PluginConstants.FOCUS_RING_DIAMETER)
-            .border({
-              width: PluginConstants.FOCUS_RING_STROKE,
-              color: Color.White,
-            })
-            .opacity(this.focusRingOpacityState)
-            .borderRadius(PluginConstants.FOCUS_RING_RADIUS)
-            .position({
-              x: this.focusRingLeftState,
-              y: this.focusRingTopState,
-            })
-        }
-        // 锁定图标
-        if (this.showLockIconState) {
-          Image($r('app.media.lock_fill'))
-            .align(Alignment.TopStart)
-            .width(PluginConstants.LOCK_ICON_SIZE)
-            .height(PluginConstants.LOCK_ICON_SIZE)
-            .opacity(this.lockIconOpacityState)
-            .position({
-              x: this.lockIconLeftState,
-              y: this.lockIconTopState,
-            })
-            .draggable(false)
-        }
+        this.buildCameraPreview();
+        this.buildScannerOverlay();
+        this.buildFocusRing();
+        this.buildLockIcon();
       }
     }
     .alignContent(Alignment.Center)
@@ -177,7 +198,7 @@ export struct CameraPreviewComponent {
     }
   }
 
-  aboutToDisappear() {
+  aboutToDisappear(): void {
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.clearLongPressTimer();
@@ -457,7 +478,50 @@ export struct CameraPreviewComponent {
     this.lockIconTopState = target.y;
   }
 
-  // 处理对焦触摸事件
+  /** 处理触摸DOWN事件：启动长按计时 */
+  private handleTouchDown(point: TouchPoint): void {
+    this.touchDownAtMs = Date.now();
+    this.isTouchPressed = true;
+    this.lockTriggeredInCurrentTouch = false;
+    this.startLongPressTimer();
+  }
+
+  /** 处理触摸UP事件：轻触对焦或结束长按 */
+  private handleTouchUp(): void {
+    if (!this.isTouchPressed || this.touchDownAtMs < 0) {
+      return;
+    }
+    this.clearLongPressTimer();
+    this.isTouchPressed = false;
+    this.touchDownAtMs = -1;
+
+    if (this.lockTriggeredInCurrentTouch || !this.flutterMLKitScannerView) {
+      return;
+    }
+    const focusPoint = this.focusPointInPreviewCache;
+    if (!focusPoint) {
+      return;
+    }
+    // 轻触对焦：显示一次淡入淡出焦圈，不显示锁定图标
+    this.updateFocusHint(false);
+    this.flutterMLKitScannerView.handleUserFocusGesture(
+      focusPoint.x,
+      focusPoint.y,
+      this.cameraWidth,
+      this.cameraHeight,
+      false,
+    );
+  }
+
+  /** 处理触摸CANCEL事件：清理状态和计时 */
+  private handleTouchCancel(): void {
+    this.clearLongPressTimer();
+    this.isTouchPressed = false;
+    this.lockTriggeredInCurrentTouch = false;
+    this.touchDownAtMs = -1;
+  }
+
+  /** 处理对焦触摸事件 */
   private handleFocusTouch(eventObj: TouchEvent): void {
     try {
       if (!this.flutterMLKitScannerView || this.cameraWidth <= 0 || this.cameraHeight <= 0) {
@@ -467,49 +531,12 @@ export struct CameraPreviewComponent {
       const rawPoint = readTouchPoint(eventObj);
       const point = rawPoint ? this.toPreviewPoint(rawPoint) : null;
 
-      // DOWN 事件时启动长按计时，满 500ms 立即触发锁定对焦（不再等待 UP）
       if (touchType === PluginConstants.TOUCH_TYPE_DOWN && point) {
-        this.touchDownAtMs = Date.now();
-        this.isTouchPressed = true;
-        this.lockTriggeredInCurrentTouch = false;
-        this.startLongPressTimer();
-        return;
-      }
-
-      // UP 如果长按已触发，则只结束本次触摸；否则按轻触对焦处理
-      if (touchType === PluginConstants.TOUCH_TYPE_UP) {
-        if (!this.isTouchPressed || this.touchDownAtMs < 0) {
-          return;
-        }
-        this.clearLongPressTimer();
-        this.isTouchPressed = false;
-        this.touchDownAtMs = -1;
-
-        if (this.lockTriggeredInCurrentTouch) {
-          return;
-        }
-        const focusPoint = this.focusPointInPreviewCache;
-        if (!focusPoint) {
-          return;
-        }
-        // 轻触对焦：显示一次淡入淡出焦圈，不显示锁定图标，并以裁剪框中心作为统一焦点
-        this.updateFocusHint(false);
-        this.flutterMLKitScannerView.handleUserFocusGesture(
-          focusPoint.x,
-          focusPoint.y,
-          this.cameraWidth,
-          this.cameraHeight,
-          false,
-        );
-        return;
-      }
-
-      // CANCEL 事件时清理状态和计时，避免残留状态影响下一次触摸
-      if (touchType === PluginConstants.TOUCH_TYPE_CANCEL) {
-        this.clearLongPressTimer();
-        this.isTouchPressed = false;
-        this.lockTriggeredInCurrentTouch = false;
-        this.touchDownAtMs = -1;
+        this.handleTouchDown(point);
+      } else if (touchType === PluginConstants.TOUCH_TYPE_UP) {
+        this.handleTouchUp();
+      } else if (touchType === PluginConstants.TOUCH_TYPE_CANCEL) {
+        this.handleTouchCancel();
       }
     } catch (error) {
       Log.w(TAG, 'handleFocusTouch skipped: ' + JSON.stringify(error));
