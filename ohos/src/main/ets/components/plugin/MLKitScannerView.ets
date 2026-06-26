@@ -604,13 +604,40 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return 0;
   }
 
+  /**
+   * 基于条码格式和原始内容推断 value_type
+   * ScanKit 不提供值类型分类，对 QR Code 尝试前缀匹配提升准确性
+   * value_type 编码参考 MLKit BarcodeValueType: 0=unknown, 2=email, 4=phone, 7=text, 8=url, 9=wifi
+   */
+  private inferValueType(rawValue: string, format: number): number {
+    // 仅对 QR Code 进行内容推断，其他格式走静态映射表
+    if (format === 256) { // QR_CODE
+      const lower = rawValue.toLowerCase();
+      if (lower.startsWith('http://') || lower.startsWith('https://')) {
+        return 8; // url
+      }
+      if (lower.startsWith('wifi:')) {
+        return 9; // wifi
+      }
+      if (lower.startsWith('tel:')) {
+        return 4; // phone
+      }
+      if (lower.startsWith('mailto:')) {
+        return 2; // email
+      }
+    }
+    return PluginConstants.BARCODE_FORMAT_TO_VALUE_TYPE[format] ?? 0;
+  }
+
   private emitScanResult(result: scanBarcode.ScanResult): void {
     const scanType = this.extractScanType(result);
     // 将 ScanKit scanType 转换为 MLKit BarcodeFormat 码
     const mappedFormat = PluginConstants.SCAN_TYPE_TO_BARCODE_FORMAT[scanType] ?? 0;
-    // 基于条码格式推断 value_type(ScanKit 不提供值类型分类)
-    const valueType = PluginConstants.BARCODE_FORMAT_TO_VALUE_TYPE[mappedFormat] ?? 0;
+    // 基于条码格式和内容推断 value_type(ScanKit 不提供值类型分类)
+    const valueType = this.inferValueType(result.originalValue, mappedFormat);
     // 将扫码解析后的结果回传flutter
+    // 注意：ScanKit 不提供独立的 displayValue，display_value 与 raw_value 相同，
+    // 这是 ScanKit API 限制，与 Android/iOS MLKit 的 displayValue 行为不同
     this.channel?.invokeMethod(PluginConstants.SCAN_RESULT_METHOD, {
       raw_value: result.originalValue,
       display_value: result.originalValue,
@@ -874,7 +901,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       result.success(true);
     } catch (error) {
       Log.e(TAG, `Failed to disposeHandle. Code: ${error.code}, message: ${error.message}`);
-      result.error('disposeHandle ', `Failed to disposeHandle. ${error.code}, message: ${error.message}`, null);
+      result.error('DISPOSE_HANDLE_ERROR', `Failed to disposeHandle. ${error.code}, message: ${error.message}`, null);
     }
   }
 
@@ -908,7 +935,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       );
     } catch (error) {
       Log.e(TAG, `Failed to getFlashLightStatus. Code: ${error.code}, message: ${error.message}`);
-      result.error('toggleFlash ', `Failed to toggleFlash. ${error.code}, message: ${error.message}`, null);
+      result.error(PluginError.DEVICE_HAS_NOT_FLASH, `Failed to toggleFlash: ${error.code}, message: ${error.message}`, null);
     }
   }
 

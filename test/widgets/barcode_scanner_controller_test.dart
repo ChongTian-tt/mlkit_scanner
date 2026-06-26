@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mlkit_scanner/mlkit_scanner.dart';
 import 'package:mlkit_scanner/models/ohos_camera_position.dart';
 import 'package:mlkit_scanner/models/ohos_camera_type.dart';
+import 'package:mlkit_scanner/models/ios_camera_position.dart';
+import 'package:mlkit_scanner/models/ios_camera_type.dart';
 import 'package:mlkit_scanner/widgets/camera_preview.dart';
 
 void main() {
@@ -264,6 +266,34 @@ void main() {
       );
       expect(capturedMethod, 'setOhosCamera',
           reason: 'OHOS 相机设置应使用 setOhosCamera 通道名');
+    });
+
+    testWidgets('setIosCamera 调用正确的 iOS 方法通道', (tester) async {
+      String? capturedMethod;
+      channel.setMockMethodCallHandler((call) async {
+        capturedMethod = call.method;
+        return null;
+      });
+
+      BarcodeScannerController? controller;
+      await tester.pumpWidget(TestApp(
+        child: BarcodeScanner(
+          onScannerInitialized: (c) => controller = c,
+          onScan: (value) {},
+        ),
+      ));
+
+      final camera = find.byType(CameraPreview);
+      final widget = tester.firstWidget(camera) as CameraPreview;
+      widget.onCameraInitialized();
+      await tester.pumpAndSettle();
+
+      await controller?.setIosCamera(
+        position: IosCameraPosition.back,
+        type: IosCameraType.wideAngle,
+      );
+      expect(capturedMethod, 'setIosCamera',
+          reason: 'iOS 相机设置应使用 setIosCamera 通道名');
     });
 
     testWidgets('控制器在 detach 后方法不调用通道', (tester) async {

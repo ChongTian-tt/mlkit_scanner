@@ -15,7 +15,7 @@ dependencies:
   mlkit_scanner:
     git:
       url: https://gitcode.com/org/OpenHarmony-Flutter/mlkit_scanner
-      ref: 0.6.0-ohos-1.0.0
+      ref: br_3.35_dev
 ```
 
 执行命令：
@@ -26,12 +26,12 @@ flutter pub get
 
 > TAG 命名规则：`原库版本-ohos-版本号`，不同 TAG 之间的变更详见 CHANGELOG.md。
 
-| Flutter 框架版本 | TAG 名称 | 备注 |
+| Flutter 框架版本 | TAG 名称 | 分支名 |
 | --- | --- | --- |
-| 3.7.12-ohos-1.1.1 | 0.6.0-ohos-1.0.0 | 首次适配 |
-| 3.22.0-ohos | 0.6.0-ohos-1.0.0 | |
-| 3.27.4-dev-oh | 0.6.0-ohos-1.0.0 | |
-| 3.35.7-ohos-0.0.1 | 0.6.0-ohos-1.0.0 | |
+| 3.7.12-ohos-1.1.1 | 0.6.0-ohos-1.0.0 | br_3.35_dev |
+| 3.22.0-ohos | 0.6.0-ohos-1.0.0 | br_3.35_dev |
+| 3.27.4-dev-oh | 0.6.0-ohos-1.0.0 | br_3.35_dev |
+| 3.35.7-ohos-0.0.1 | 0.6.0-ohos-1.0.0 | br_3.35_dev |
 
 ## 约束与限制
 
