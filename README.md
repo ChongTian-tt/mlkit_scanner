@@ -32,6 +32,22 @@ This plugin supports OpenHarmony platform. For detailed OHOS documentation, plea
 
 The OHOS implementation uses `@kit.ScanKit` for barcode decoding and `@kit.CameraKit` for camera management.
 
+### OHOS Installation
+
+Add `mlkit_scanner` to your `pubspec.yaml` dependencies, then run `flutter pub get`.
+
+In your OHOS module's `oh-package.json5`, ensure the plugin is listed under dependencies:
+
+```json5
+"dependencies": {
+  "mlkit_scanner": "file:../../path/to/mlkit_scanner/ohos"
+}
+```
+
+### OHOS Version Requirements
+
+See [README.OpenHarmony.md](README.OpenHarmony.md#constraints-and-limitations) for the full compatibility matrix of Flutter, SDK, IDE, and ROM versions.
+
 ## Installation
 
 First, add `mlkit_scanner` as a dependency in your pubspec.yaml.

@@ -562,6 +562,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     try {
       const service = this.getCameraService();
       await service?.stopCamera();
+      // stopCamera 已通过 offImageArrival 取消了帧回调订阅，
+      // 需重置绑定标志，以便 resume 时 bindFrameListener 能重新绑定
+      this.isFrameListenerBound = false;
       this.endPreviewSession();
     } catch (error) {
       Log.e(TAG, 'pausePreviewFlow error: ' + JSON.stringify(error));
@@ -592,46 +595,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return this.initialScannerParameters?.initialCropRect ?? null;
   }
 
-  // ScanKit scanType → MLKit BarcodeFormat 映射表
-  // ScanKit 返回的 scanType 码与 MLKit 的 BarcodeFormat 码完全不同,
-  // 直接传给 Flutter 会导致条码格式被误判(如 QR 扫码结果被识别为 code128)
-  private static readonly SCAN_TYPE_TO_BARCODE_FORMAT: Record<number, number> = {
-    0: 0, // ALL → unknown
-    1: 256, // QR_CODE → qrCode
-    2: 4096, // AZTEC → aztec
-    3: 16, // DATA_MATRIX → dataMatrix
-    4: 2048, // PDF417 → pdf417
-    5: 1, // CODE_128 → code128
-    6: 2, // CODE_39 → code39
-    7: 4, // CODE_93 → code93
-    8: 8, // CODABAR → codabar
-    9: 32, // EAN_13 → ean13
-    10: 64, // EAN_8 → ean8
-    11: 128, // ITF → itf
-    12: 512, // UPC_A → upcA
-    13: 1024, // UPC_E → upcE
-  };
-
-  // 基于条码格式推断 value_type(ScanKit 不提供值类型分类,需自行推断)
-  // 参考 MLKit BarcodeValueType 编码：0=unknown, 1=contactInfo, 2=email, 3=isbn,
-  // 4=phone, 5=product, 6=sms, 7=text, 8=url, 9=wifi, 10=geo, 11=calendarEvent, 12=driverLicense
-  private static readonly BARCODE_FORMAT_TO_VALUE_TYPE: Record<number, number> = {
-    0: 0, // unknown → unknown
-    1: 7, // code128 → text(一维码默认为文本)
-    2: 7, // code39 → text
-    4: 7, // code93 → text
-    8: 7, // codabar → text
-    16: 7, // dataMatrix → text(二维码默认为文本)
-    32: 5, // ean13 → product(商品码)
-    64: 5, // ean8 → product(商品码)
-    128: 5, // itf → product(商品码)
-    256: 7, // qrCode → text(QR 码默认文本,URL 场景由应用层判断)
-    512: 5, // upcA → product(商品码)
-    1024: 5, // upcE → product(商品码)
-    2048: 7, // pdf417 → text
-    4096: 7, // aztec → text
-  };
-
   private extractScanType(result: scanBarcode.ScanResult): number {
     const resultMap = this.scanResultToRecord(result);
     const scanType = Number(resultMap['scanType']);
@@ -644,9 +607,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private emitScanResult(result: scanBarcode.ScanResult): void {
     const scanType = this.extractScanType(result);
     // 将 ScanKit scanType 转换为 MLKit BarcodeFormat 码
-    const mappedFormat = MLKitScannerView.SCAN_TYPE_TO_BARCODE_FORMAT[scanType] ?? 0;
+    const mappedFormat = PluginConstants.SCAN_TYPE_TO_BARCODE_FORMAT[scanType] ?? 0;
     // 基于条码格式推断 value_type(ScanKit 不提供值类型分类)
-    const valueType = MLKitScannerView.BARCODE_FORMAT_TO_VALUE_TYPE[mappedFormat] ?? 0;
+    const valueType = PluginConstants.BARCODE_FORMAT_TO_VALUE_TYPE[mappedFormat] ?? 0;
     // 将扫码解析后的结果回传flutter
     this.channel?.invokeMethod(PluginConstants.SCAN_RESULT_METHOD, {
       raw_value: result.originalValue,
@@ -854,6 +817,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       return;
     }
 
+    // 断开闭包对 MLKitScannerView 的引用，提前解除循环引用链
+    service.clearSharedStateRefs();
     try {
       await service.releaseCamera();
     } catch (error) {
@@ -1049,46 +1014,56 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
   // 更新预览约束,如果新的预览尺寸与当前相同则直接返回成功,否则更新预览尺寸并应用新的约束,如果相机未初始化则返回错误
   private updateConstraints(call: MethodCall, result: MethodResult): void {
-    const args = this.normalizeArgs(call.args);
-    const rawSize = this.parsePositiveSize(args);
-    if (!rawSize) {
-      result.error(
-        PluginError.INVALID_ARGUMENTS,
-        'Invalid constraints, positive width/height expected',
-        null,
-      );
-      return;
-    }
-    const sizeChanged = this.applyPreviewContainerSize(rawSize.width, rawSize.height);
-    if (!sizeChanged) {
-      result.success(true);
-      return;
-    }
+    try {
+      const args = this.normalizeArgs(call.args);
+      const rawSize = this.parsePositiveSize(args);
+      if (!rawSize) {
+        result.error(
+          PluginError.INVALID_ARGUMENTS,
+          'Invalid constraints, positive width/height expected',
+          null,
+        );
+        return;
+      }
+      const sizeChanged = this.applyPreviewContainerSize(rawSize.width, rawSize.height);
+      if (!sizeChanged) {
+        result.success(true);
+        return;
+      }
 
-    const comp = getCurrentCameraPreviewComponent();
-    if (comp) {
-      comp.applyCropRect();
+      const comp = getCurrentCameraPreviewComponent();
+      if (comp) {
+        comp.applyCropRect();
+      }
+      result.success(true);
+    } catch (error) {
+      Log.e(TAG, 'updateConstraints failed: ' + JSON.stringify(error));
+      result.error(PluginError.INVALID_ARGUMENTS, 'updateConstraints failed', null);
     }
-    result.success(true);
   }
 
   private async pauseCamera(result: MethodResult): Promise<void> {
-    // 暂停相机
-    if (this.previewState.isPausedByUser) {
+    try {
+      // 暂停相机
+      if (this.previewState.isPausedByUser) {
+        result.success(true);
+        return;
+      }
+      const isFlashOn = this.getFlashLightStatusSafely();
+      if (isFlashOn) {
+        this.closeFlashLightSafely();
+      }
+      // 强制恢复,因为上面的 closeFlashLightSafely 会触发回调将本类的状态设为了 false
+      this.flashLightStatusBeforePause = isFlashOn;
+      this.previewState.isPausedByUser = true;
+      this.originalValue = '';
+      this.clearScanDelayTimer();
+      await this.pausePreviewFlow();
       result.success(true);
-      return;
+    } catch (error) {
+      Log.e(TAG, 'pauseCamera failed: ' + JSON.stringify(error));
+      result.error(PluginError.CAMERA_IS_NOT_INITIALIZED, 'pauseCamera failed', null);
     }
-    const isFlashOn = this.getFlashLightStatusSafely();
-    if (isFlashOn) {
-      this.closeFlashLightSafely();
-    }
-    // 强制恢复,因为上面的 closeFlashLightSafely 会触发回调将本类的状态设为了 false
-    this.flashLightStatusBeforePause = isFlashOn;
-    this.previewState.isPausedByUser = true;
-    this.originalValue = '';
-    this.clearScanDelayTimer();
-    await this.pausePreviewFlow();
-    result.success(true);
   }
 
   /**
@@ -1168,7 +1143,15 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
           `Failed to onHostBackground. isPausedByUser == true. Code: ${error.code}, message: ${error.message}`);
       }
     } else {
-      await this.pausePreviewFlow();
+      // 非用户暂停场景：释放会话资源而非仅停止，避免前台恢复时覆盖泄漏
+      try {
+        await this.pausePreviewFlow();
+        const service = this.getCameraService();
+        await service?.preFrontRelease(false);
+      } catch (error) {
+        Log.e(TAG,
+          `Failed to onHostBackground. Code: ${error.code}, message: ${error.message}`);
+      }
     }
   }
 

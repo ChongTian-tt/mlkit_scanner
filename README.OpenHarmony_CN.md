@@ -28,7 +28,7 @@ flutter pub get
 
 | Flutter 框架版本 | TAG 名称 | 备注 |
 | --- | --- | --- |
-| 3.7.12-ohos-1.0.6 | 0.6.0-ohos-1.0.0 | 首次适配 |
+| 3.7.12-ohos-1.1.1 | 0.6.0-ohos-1.0.0 | 首次适配 |
 | 3.22.0-ohos | 0.6.0-ohos-1.0.0 | |
 | 3.27.4-dev-oh | 0.6.0-ohos-1.0.0 | |
 | 3.35.7-ohos-0.0.1 | 0.6.0-ohos-1.0.0 | |
@@ -39,7 +39,7 @@ flutter pub get
 
 在下述版本验证通过：
 
-1. Flutter: 3.7.12-ohos-1.0.6; SDK: 5.0.0(12); IDE: DevEco Studio: 5.0.13.200; ROM: 5.1.0.120 SP3;
+1. Flutter: 3.7.12-ohos-1.1.1; SDK: 5.0.0(12); IDE: DevEco Studio: 5.0.13.200; ROM: 5.1.0.120 SP3;
 2. Flutter: 3.22.0-ohos; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
 3. Flutter: oh-3.27.4-dev; SDK: 5.0.0(12); IDE: DevEco Studio: 5.1.0.828; ROM: 6.0.0.120 SP8;
 4. Flutter: 3.35.7-ohos-0.0.1; SDK: 6.0.1(21); IDE: DevEco Studio: 6.0.1.260; ROM: 6.0.0.120 SP6;
@@ -177,7 +177,7 @@ List<OhosCamera> cameras = await MLKitUtils().getOhosAvailableCameras();
 // 按位置与类型切换相机
 await controller.setOhosCamera(
   position: OhosCameraPosition.back,
-  type: OhosCameraType.wideAngle,
+  type: OhosCameraType.CAMERA_TYPE_WIDE_ANGLE,
 );
 ```
 

@@ -46,8 +46,9 @@ export class CameraService {
   // imageArrival 事件回调引用，用于 off() 取消订阅
   private imageArrivalCallback: (() => void) | null = null;
   // 由外部注入的闪光灯状态读写器（共享 MLKitScannerView 中的状态）
-  private readonly getSharedFlashStatus: () => boolean;
-  private readonly setSharedFlashStatus: (status: boolean) => void;
+  // 非 readonly 以便在 dispose 时通过 clearSharedStateRefs() 断开循环引用
+  private getSharedFlashStatus: () => boolean;
+  private setSharedFlashStatus: (status: boolean) => void;
   // 图像接收器，用于接收相机预览帧并进行扫码解码
   public imageReceiver: image.ImageReceiver;
   // 标记是否已释放 ImageReceiver，避免重复释放导致错误
@@ -388,13 +389,18 @@ export class CameraService {
       return false;
     }
 
-    this.currentCameraDevice = this.resolveCameraDevice(cameraId);
-    if (!this.currentCameraDevice) {
+    const device = this.resolveCameraDevice(cameraId);
+    if (!device) {
       Log.e(TAG, 'initCamera failed: camera device unavailable');
       return false;
     }
 
     try {
+      // 先释放旧会话资源，防止覆盖泄漏
+      // clearSessionRefs 会将 currentCameraDevice 置空，因此在释放后再赋值
+      await this.releaseSessionResources();
+      this.currentCameraDevice = device;
+
       const previewProfile = this.validateAndGetPreviewProfile();
       if (!previewProfile) {
         return false;
@@ -410,6 +416,8 @@ export class CameraService {
       this.isStop = false;
       return true;
     } catch (error) {
+      // 失败时释放已创建的资源
+      await this.releaseSessionResources();
       Log.e(TAG, 'initCamera failed: ' + JSON.stringify(error));
       return false;
     }
@@ -724,6 +732,8 @@ export class CameraService {
       // 停止会话工作，通过注册回调函数获取结果
       await this.photoSession?.stop();
       this.isStop = true;
+      // 显式取消 imageArrival 订阅，避免后台切换时回调在已停止状态下触发
+      this.offImageArrival();
     } catch (error) {
       Log.e(TAG, 'stopCamera failed: ' + JSON.stringify(error));
     }
@@ -753,12 +763,19 @@ export class CameraService {
         this.isImageReceiverReleased = true;
         await this.imageReceiver.release();
       }
-      // 显式清理缓存数据
+      // 显式清理缓存数据和系统资源引用
       this.preferredPreviewProfileCache = {};
       this.camerasDevices = [];
+      this.cameraManager = undefined;
     } catch (error) {
       Log.w(TAG, 'releaseCamera skipped: ' + JSON.stringify(error));
     }
+  }
+
+  /** 断开闭包对 MLKitScannerView 的引用，提前解除循环引用链 */
+  clearSharedStateRefs(): void {
+    this.getSharedFlashStatus = () => false;
+    this.setSharedFlashStatus = (_: boolean) => {};
   }
 
   // 取消 imageArrival 事件订阅，防止回调在释放后触发和循环引用
@@ -782,31 +799,35 @@ export class CameraService {
       if (this.isStop) {
         return;
       }
-      // 从ImageReceiver读取下一张图片
-      this.imageReceiver.readNextImage((err: BusinessError, nextImage: image.Image) => {
-        if (err || nextImage === undefined) {
-          Log.e(TAG, 'onImageArrival readNextImage failed');
-          return;
-        }
-        // 根据图像的组件类型从图像中获取组件缓存
-        nextImage.getComponent(image.ComponentType.JPEG,
-          async (compErr: BusinessError, imgComponent: image.Component) => {
-          if (compErr || imgComponent === undefined) {
-            Log.e(TAG, 'onImageArrival getComponent(JPEG) failed: ' + JSON.stringify(compErr));
-            await nextImage.release();
+      try {
+        // 从ImageReceiver读取下一张图片
+        this.imageReceiver.readNextImage((err: BusinessError, nextImage: image.Image) => {
+          if (err || nextImage === undefined) {
+            Log.e(TAG, 'onImageArrival readNextImage failed');
             return;
           }
-          if (imgComponent.byteBuffer as ArrayBuffer) {
-            // 对图片进行解码
-            await this.decodeImageBuffer(
-              imgComponent, nextImage.size.width, nextImage.size.height,
-              scanCallback, nextImage
-            );
-          } else {
-            await nextImage.release();
-          }
+          // 根据图像的组件类型从图像中获取组件缓存
+          nextImage.getComponent(image.ComponentType.JPEG,
+            async (compErr: BusinessError, imgComponent: image.Component) => {
+            if (compErr || imgComponent === undefined) {
+              Log.e(TAG, 'onImageArrival getComponent(JPEG) failed: ' + JSON.stringify(compErr));
+              await nextImage.release();
+              return;
+            }
+            if (imgComponent.byteBuffer as ArrayBuffer) {
+              // 对图片进行解码
+              await this.decodeImageBuffer(
+                imgComponent, nextImage.size.width, nextImage.size.height,
+                scanCallback, nextImage
+              );
+            } else {
+              await nextImage.release();
+            }
+          });
         });
-      });
+      } catch (error) {
+        Log.e(TAG, 'imageArrivalCallback unhandled: ' + JSON.stringify(error));
+      }
     };
     this.imageReceiver.on('imageArrival', this.imageArrivalCallback);
   }
