@@ -42,8 +42,8 @@ void main() {
       expect(cameras, isA<List<IosCamera>>());
       expect(cameras.length, 2);
       expect(cameras[0].position, IosCameraPosition.back);
-      expect(cameras[0].type, IosCameraType.wideAngle);
-      expect(cameras[1].position, IosCameraPosition.front);
+      expect(cameras[0].type, IosCameraType.builtInWideAngleCamera);
+      expect(cameras[1].position, IosCameraPosition.unspecified);
     });
 
     test('getOhosAvailableCameras 调用正确的方法并解析返回值', () async {

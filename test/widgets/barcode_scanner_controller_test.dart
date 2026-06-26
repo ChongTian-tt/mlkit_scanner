@@ -290,7 +290,7 @@ void main() {
 
       await controller?.setIosCamera(
         position: IosCameraPosition.back,
-        type: IosCameraType.wideAngle,
+        type: IosCameraType.builtInWideAngleCamera,
       );
       expect(capturedMethod, 'setIosCamera',
           reason: 'iOS 相机设置应使用 setIosCamera 通道名');
