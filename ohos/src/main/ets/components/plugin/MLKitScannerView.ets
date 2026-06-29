@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 import { common } from '@kit.AbilityKit';
 import {
   MethodCall,
@@ -36,17 +37,18 @@ import {
   PluginConstants,
   PluginError,
   PreviewState,
-  OhosCameraItem,
-  ScanRectLike
 } from './PluginConstants';
+import { ArgsParser } from './ArgsParser';
+import { ScanMethodHandler } from './ScanMethodHandler';
+import { ScanResultProcessor, ScanResultCallbacks } from './ScanResultProcessor';
 
 const TAG: string = '[MLKitScannerView:]';
 
 let flutterMLKitScannerView: MLKitScannerView | null;
 
 export class MLKitScannerView extends PlatformView implements MethodCallHandler {
-  private context: common.Context | null = null;
-  private surfaceId: string = '';
+  public context: common.Context | null = null;
+  public surfaceId: string = '';
   private originalValue: string = '';
   public channel: MethodChannel | null = null;
   public methodResult: MethodResult | null = null;
@@ -61,8 +63,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   // 容器原始尺寸(Flutter 约束 / onAreaChange 原生 vp),用于居中预览
   private containerSize: Size = { width: 0, height: 0 };
   // 扫描延迟,单位是毫秒
-  private scanDelayMs: number = 100;
-  private previewState: PreviewState = {
+  public scanDelayMs: number = 100;
+  public previewState: PreviewState = {
     isRunning: false, // 预览流是否开启
     isPausedByUser: false, // 是否是用户暂停
   };
@@ -79,9 +81,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   // yuv帧的高度,用于坐标转换
   private yuvFrameHeight: number = 0;
   // 当前选中的摄像头参数
-  private selectedCameraPositionCode: number = 1;
-  private selectedCameraTypeCode: number = 0;
-  private selectedCameraId: string = '';
+  public selectedCameraPositionCode: number = 1;
+  public selectedCameraTypeCode: number = 0;
+  public selectedCameraId: string = '';
   private cameraService: CameraService | null = null;
   // 预览源尺寸宽高比
   private previewSourceSize: Size = {
@@ -91,6 +93,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   // 帧监听是否已绑定到当前 ImageReceiver,initCamera 后会重置该标志以确保正确绑定
   private isFrameListenerBound: boolean = false;
   private isPreviewStarting: boolean = false;
+  // 扫描方法处理器
+  private scanMethodHandler: ScanMethodHandler;
+  // 扫码结果处理器
+  private scanResultProcessor: ScanResultProcessor;
 
   /**
    * 创建 MLKitScannerView 实例，初始化 MethodChannel 和 CameraService
@@ -108,6 +114,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     this.previewSize = this.parsePreviewSize(args);
     this.cameraService = this.createCameraService();
+    this.scanMethodHandler = new ScanMethodHandler(this);
+    this.scanResultProcessor = new ScanResultProcessor(this.createScanResultCallbacks());
   }
 
   /**
@@ -132,7 +140,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    * 获取 CameraService 实例，懒创建
    * @returns CameraService 实例，创建失败时返回 null
    */
-  private getCameraService(): CameraService | null {
+  public getCameraService(): CameraService | null {
     if (!this.cameraService) {
       this.cameraService = this.createCameraService();
     }
@@ -170,145 +178,31 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 将 ScanResult 中需要的属性逐个提取到 Record<string, Object>。
-   * ScanResult 实际运行时属性：
-   * scanType, originalValue, scanCodeRect, cornerPoints, isGS1, frameHeight
+   * 创建扫码结果处理器回调集合
+   * @returns 回调集合，桥接 MLKitScannerView 的状态读写
    */
-  private scanResultToRecord(result: scanBarcode.ScanResult): Record<string, Object> {
-    const record: Record<string, Object> = {};
-    // 逐个提取类型声明中已暴露的属性，避免 ESObject / 类型断言
-    record['scanType'] = result.scanType;
-    record['originalValue'] = result.originalValue;
-    if (result.scanCodeRect !== undefined) {
-      record['scanCodeRect'] = result.scanCodeRect;
-    }
-    if (result.cornerPoints !== undefined) {
-      record['cornerPoints'] = result.cornerPoints;
-    }
-    return record;
-  }
-
-  /**
-   * 从 ScanResult 中提取未在类型声明中暴露的 frameHeight 属性。
-   * 通过 JSON 序列化/反序列化安全获取，避免类型断言。
-   */
-  private extractFrameHeight(result: scanBarcode.ScanResult): number {
-    try {
-      const jsonObj: Record<string, Object> = JSON.parse(JSON.stringify(result)) as Record<string, Object>;
-      const frameHeight = Number(jsonObj['frameHeight']);
-      if (Number.isFinite(frameHeight) && frameHeight > 0) {
-        return Math.round(frameHeight);
-      }
-    } catch (error) {
-      Log.w(TAG, 'extractFrameHeight skipped: ' + JSON.stringify(error));
-    }
-    return 0;
-  }
-
-  /**
-   * 从 ScanResult 中提取扫码矩形坐标
-   * @param result - 扫码结果
-   * @returns 扫码矩形坐标，提取失败时返回 null
-   */
-  private extractScanRect(result: scanBarcode.ScanResult): ScanRectLike | null {
-    try {
-      const rec = this.scanResultToRecord(result);
-      const scanCodeRect = rec['scanCodeRect'];
-      if (!scanCodeRect || typeof scanCodeRect !== 'object') {
-        return null;
-      }
-      const rect = scanCodeRect as Record<string, Object>;
-      const left = Number(rect['left']);
-      const top = Number(rect['top']);
-      const right = Number(rect['right']);
-      const bottom = Number(rect['bottom']);
-      if ([left, top, right, bottom].every((n) => Number.isFinite(n))) {
-        return {
-          left,
-          top,
-          right,
-          bottom
-        } as ScanRectLike;
-      }
-      return null;
-    } catch (error) {
-      Log.w(TAG, 'extractScanRect skipped: ' + JSON.stringify(error));
-      return null;
-    }
-  }
-
-  /**
-   * 中心区域扫码框，作为扫码结果坐标缺失时的兜底方案
-   * @returns 预览区域中心 30% 范围的矩形坐标
-   */
-  private fallbackCenterRect(): ScanRectLike {
-    const w = this.previewSize.width > 0 ? this.previewSize.width : this.containerSize.width;
-    const h = this.previewSize.height > 0 ? this.previewSize.height : this.containerSize.height;
-    const left = Math.round(w * 0.35);
-    const top = Math.round(h * 0.35);
-    const right = Math.round(w * 0.65);
-    const bottom = Math.round(h * 0.65);
+  private createScanResultCallbacks(): ScanResultCallbacks {
     return {
-      left,
-      top,
-      right,
-      bottom
-    } as ScanRectLike;
+      getIsScan: () => this.isScan,
+      getIsDelayed: () => this.isDelayed,
+      getOriginalValue: () => this.originalValue,
+      setOriginalValue: (v: string) => { this.originalValue = v; },
+      getYuvFrameHeight: () => this.yuvFrameHeight,
+      setYuvFrameHeight: (h: number) => { this.yuvFrameHeight = h; },
+      getPreviewSize: () => this.getPreviewSize(),
+      getContainerSize: () => this.getContainerSize(),
+      getInitialScannerParameters: () => this.initialScannerParameters,
+      getChannel: () => this.channel,
+      startScanDelayWindow: () => { this.startScanDelayWindow(); },
+    };
   }
 
   /**
-   * 处理帧扫码结果：提取坐标、转换为屏幕坐标、判断是否在扫码框内、触发结果回调
+   * 处理帧扫码结果：委托给 ScanResultProcessor
    * @param result - ScanKit 返回的扫码结果
    */
   private onFrameResult(result: scanBarcode.ScanResult): void {
-    try {
-      if (!this.isScan || this.isDelayed) {
-        return;
-      }
-      if (!result.originalValue) {
-        return;
-      }
-
-      this.originalValue = result.originalValue;
-      const frameHeight = this.extractFrameHeight(result);
-
-      if (frameHeight > 0) {
-        this.yuvFrameHeight = frameHeight;
-      }
-      const rectLikeRaw = this.extractScanRect(result);
-      const candidates: scanBarcode.ScanCodeRect[] = [];
-      if (rectLikeRaw) {
-        // 原始扫码结果坐标
-        const scanRect: scanBarcode.ScanCodeRect = {
-          left: Math.round(rectLikeRaw.left),
-          top: Math.round(rectLikeRaw.top),
-          right: Math.round(rectLikeRaw.right),
-          bottom: Math.round(rectLikeRaw.bottom),
-        };
-        candidates.push(scanRect);
-        // 转换为屏幕坐标
-        const convertedScanRect = this.convertYuvToScreenCoords(scanRect);
-        candidates.push(convertedScanRect);
-      } else {
-        // 没有扫码结果坐标时,使用兜底中心区域
-        const fallbackRect = this.fallbackCenterRect();
-        candidates.push({
-          left: Math.round(fallbackRect.left),
-          top: Math.round(fallbackRect.top),
-          right: Math.round(fallbackRect.right),
-          bottom: Math.round(fallbackRect.bottom),
-        });
-      }
-      // 只要有一个候选区域在扫码框内就判定为命中
-      const matched = candidates.some(rect => this.checkResultInScanBox(rect));
-      if (matched) {
-        this.emitScanResult(result);
-        this.originalValue = '';
-        this.startScanDelayWindow();
-      }
-    } catch (error) {
-      Log.w(TAG, 'onFrameResult skipped: ' + JSON.stringify(error));
-    }
+    this.scanResultProcessor.onFrameResult(result);
   }
 
   /**
@@ -346,16 +240,16 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
           this.toggleFlash(result);
           break;
         case PluginConstants.START_SCAN_METHOD:
-          await this.startScan(call, result);
+          await this.scanMethodHandler.startScan(call, result);
           break;
         case PluginConstants.CANCEL_SCAN_METHOD:
-          this.cancelScan(result);
+          await this.scanMethodHandler.cancelScan(result);
           break;
         case PluginConstants.SET_SCAN_DELAY_METHOD:
-          this.setScanDelay(call, result);
+          this.scanMethodHandler.setScanDelay(call, result);
           break;
         case PluginConstants.UPDATE_CONSTRAINTS_METHOD:
-          this.updateConstraints(call, result);
+          this.scanMethodHandler.updateConstraints(call, result);
           break;
         case PluginConstants.PAUSE_CAMERA_METHOD:
           this.pauseCamera(result);
@@ -367,13 +261,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
           this.setZoom(call, result);
           break;
         case PluginConstants.SET_CROP_AREA_METHOD:
-          this.setCropArea(call, result);
+          this.scanMethodHandler.setCropArea(call, result);
           break;
         case PluginConstants.GET_OHOS_AVAILABLE_CAMERAS_METHOD:
-          this.getOhosAvailableCameras(result);
+          this.scanMethodHandler.getOhosAvailableCameras(result);
           break;
         case PluginConstants.SET_OHOS_CAMERA_METHOD:
-          this.setOhosCamera(call, result);
+          this.scanMethodHandler.setOhosCamera(call, result);
           break;
         default:
           result.notImplemented();
@@ -461,7 +355,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    * @param height - 容器高度
    * @returns 预览尺寸是否发生变化
    */
-  private applyPreviewContainerSize(width: number, height: number): boolean {
+  public applyPreviewContainerSize(width: number, height: number): boolean {
     this.containerSize = { width, height };
     const next = this.calcPreviewSizeAspectCover(width, height);
     const sizeChanged = next.width !== this.previewSize.width || next.height !== this.previewSize.height;
@@ -472,7 +366,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   /**
    * 布局变化后重启预览：释放旧会话、重新启动预览并应用缩放
    */
-  private async restartPreviewAfterLayoutChange(): Promise<void> {
+  public async restartPreviewAfterLayoutChange(): Promise<void> {
     if (!this.surfaceId || !this.isCameraInitialized) {
       return;
     }
@@ -513,7 +407,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   /**
    * 开启扫描会话，标记扫描状态为活跃
    */
-  private beginScanSession(): void {
+  public beginScanSession(): void {
     this.isScan = true;
     getCurrentCameraPreviewComponent()?.setScanActive(true);
   }
@@ -521,7 +415,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   /**
    * 结束扫描会话，标记扫描状态为非活跃
    */
-  private endScanSession(): void {
+  public endScanSession(): void {
     this.isScan = false;
     getCurrentCameraPreviewComponent()?.setScanActive(false);
   }
@@ -536,47 +430,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    */
   private endPreviewSession(): void {
     this.previewState.isRunning = false;
-  }
-
-  /**
-   * 归一化参数，将框架传入的 Object 转换为强类型 Record
-   * @param rawArgs - 原始参数对象
-   * @returns 归一化后的键值对
-   */
-  private normalizeArgs(rawArgs: Object): Record<string, Object> {
-    try {
-      if (!rawArgs || typeof rawArgs !== 'object') {
-        return {};
-      }
-
-      if (typeof (rawArgs as Record<string, Object>)['forEach'] === 'function') {
-        const args: Record<string, Object> = {};
-        const rawMap = rawArgs as Map<string, Object>;
-        rawMap.forEach((value: Object, key: string) => {
-          args[key] = this.recursivelyConvertMap(value);
-        });
-        return args;
-      }
-
-      return this.recursivelyConvertMap(rawArgs) as Record<string, Object>;
-    } catch (error) {
-      Log.w(TAG, 'normalizeArgs skipped: ' + JSON.stringify(error));
-      return {};
-    }
-  }
-
-  /**
-   * 解析正数尺寸参数
-   * @param args - 包含 width 和 height 字段的键值对
-   * @returns 有效的正数尺寸，参数无效时返回 null
-   */
-  private parsePositiveSize(args: Record<string, Object>): Size | null {
-    const width = Number(args['width']);
-    const height = Number(args['height']);
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-      return null;
-    }
-    return { width: Math.round(width), height: Math.round(height) };
   }
 
   /**
@@ -611,7 +464,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    * @returns 计算后的预览尺寸
    */
   private parsePreviewSize(args: Object): Size {
-    const raw = this.parsePositiveSize(this.normalizeArgs(args));
+    const raw = ArgsParser.parsePositiveSize(ArgsParser.normalizeArgs(args));
     if (!raw) {
       this.containerSize = { width: 376, height: 200 };
       return this.calcPreviewSizeAspectCover(376, 200);
@@ -623,7 +476,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   /**
    * 清除扫描延迟定时器，重置延迟标志
    */
-  private clearScanDelayTimer(): void {
+  public clearScanDelayTimer(): void {
     if (this.scanDelayTimerId >= 0) {
       clearTimeout(this.scanDelayTimerId);
       this.scanDelayTimerId = -1;
@@ -634,7 +487,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   /**
    * 启动扫描延迟窗口，在延迟期间阻止结果输出
    */
-  private startScanDelayWindow(): void {
+  public startScanDelayWindow(): void {
     this.clearScanDelayTimer();
     if (this.scanDelayMs <= 0) {
       return;
@@ -688,77 +541,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 获取当前活跃的裁剪矩形
-   * @returns 裁剪矩形，未设置时返回 null
-   */
-  private getActiveCropRect(): CropRect | null {
-    return this.initialScannerParameters?.initialCropRect ?? null;
-  }
-
-  /**
-   * 从 ScanResult 中提取扫码类型编码
-   * @param result - 扫码结果
-   * @returns 扫码类型编码，提取失败时返回 0
-   */
-  private extractScanType(result: scanBarcode.ScanResult): number {
-    const resultMap = this.scanResultToRecord(result);
-    const scanType = Number(resultMap['scanType']);
-    if (Number.isFinite(scanType)) {
-      return scanType;
-    }
-    return 0;
-  }
-
-  /**
-   * 基于条码格式和原始内容推断 value_type
-   * ScanKit 不提供值类型分类，对 QR Code 尝试前缀匹配提升准确性
-   * value_type 编码参考 MLKit BarcodeValueType: 0=unknown, 2=email, 4=phone, 7=text, 8=url, 9=wifi
-   */
-  private inferValueType(rawValue: string, format: number): number {
-    // 仅对 QR Code 进行内容推断，其他格式走静态映射表
-    if (format === 256) { // QR_CODE
-      const lower = rawValue.toLowerCase();
-      if (lower.startsWith('http://') || lower.startsWith('https://')) {
-        return 8; // url
-      }
-      if (lower.startsWith('wifi:')) {
-        return 9; // wifi
-      }
-      if (lower.startsWith('tel:')) {
-        return 4; // phone
-      }
-      if (lower.startsWith('mailto:')) {
-        return 2; // email
-      }
-    }
-    return PluginConstants.BARCODE_FORMAT_TO_VALUE_TYPE[format] ?? 0;
-  }
-
-  /**
-   * 将扫码结果通过 MethodChannel 回传给 Flutter
-   * @param result - ScanKit 返回的扫码结果
-   */
-  private emitScanResult(result: scanBarcode.ScanResult): void {
-    const scanType = this.extractScanType(result);
-    // 将 ScanKit scanType 转换为 MLKit BarcodeFormat 码
-    const mappedFormat = PluginConstants.SCAN_TYPE_TO_BARCODE_FORMAT[scanType] ?? 0;
-    // 基于条码格式和内容推断 value_type(ScanKit 不提供值类型分类)
-    const valueType = this.inferValueType(result.originalValue, mappedFormat);
-    // 将扫码解析后的结果回传flutter
-    // 注意：ScanKit 不提供独立的 displayValue，display_value 与 raw_value 相同，
-    // 这是 ScanKit API 限制，与 Android/iOS MLKit 的 displayValue 行为不同
-    this.channel?.invokeMethod(PluginConstants.SCAN_RESULT_METHOD, {
-      raw_value: result.originalValue,
-      display_value: result.originalValue,
-      format: mappedFormat,
-      value_type: valueType,
-    });
-  }
-
-  /**
    * 启动相机预览：创建相机设备、初始化相机会话、绑定帧监听并应用缩放
    */
-  private async startPreview(): Promise<void> {
+  public async startPreview(): Promise<void> {
     if (!this.isCameraInitialized || !this.surfaceId || this.previewState.isPausedByUser) {
       Log.w(
         TAG,
@@ -798,80 +583,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 检查二维码是否在扫码框内(crop 相对于可见区域)
-   */
-  private checkResultInScanBox(scanCodeRect: scanBarcode.ScanCodeRect): boolean {
-    const cropRect = this.getActiveCropRect();
-    // 未设置裁剪框时默认全屏可识别
-    if (!cropRect) {
-      return true;
-    }
-
-    const baseWidth = this.containerSize.width;
-    const baseHeight = this.containerSize.height;
-    if (baseWidth <= 0 || baseHeight <= 0) {
-      return false;
-    }
-
-    const cropWidth = baseWidth * cropRect.scaleWidth;
-    const cropHeight = baseHeight * cropRect.scaleHeight;
-    const cropLeft = (baseWidth / 2) * (1 + cropRect.offsetX) - cropWidth / 2;
-    const cropTop = (baseHeight / 2) * (1 + cropRect.offsetY) - cropHeight / 2;
-    const cropRight = cropLeft + cropWidth;
-    const cropBottom = cropTop + cropHeight;
-
-    let codeLeft = Math.min(scanCodeRect.left, scanCodeRect.right);
-    let codeRight = Math.max(scanCodeRect.left, scanCodeRect.right);
-    let codeTop = Math.min(scanCodeRect.top, scanCodeRect.bottom);
-    let codeBottom = Math.max(scanCodeRect.top, scanCodeRect.bottom);
-    if (this.previewSize.width <= this.containerSize.width) {
-      const padX = (this.containerSize.width - this.previewSize.width) / 2;
-      codeLeft += padX;
-      codeRight += padX;
-    } else {
-      const cropX = (this.previewSize.width - this.containerSize.width) / 2;
-      codeLeft -= cropX;
-      codeRight -= cropX;
-    }
-    if (this.previewSize.height <= this.containerSize.height) {
-      const padY = (this.containerSize.height - this.previewSize.height) / 2;
-      codeTop += padY;
-      codeBottom += padY;
-    } else {
-      const cropY = (this.previewSize.height - this.containerSize.height) / 2;
-      codeTop -= cropY;
-      codeBottom -= cropY;
-    }
-    const inScanBox =
-      codeLeft >= cropLeft &&
-        codeRight <= cropRight &&
-        codeTop >= cropTop &&
-        codeBottom <= cropBottom;
-
-    return inScanBox;
-  }
-
-  /**
-   * 将YUV帧坐标转换为屏幕坐标
-   */
-  private convertYuvToScreenCoords(yuvRect: scanBarcode.ScanCodeRect): scanBarcode.ScanCodeRect {
-    if (!this.yuvFrameHeight) {
-      return yuvRect;
-    }
-    const ratio = this.previewSize.width / this.yuvFrameHeight;
-    const convertedLeft = (this.yuvFrameHeight - yuvRect.bottom) * ratio;
-    const convertedTop = yuvRect.left * ratio;
-    const convertedRight = (this.yuvFrameHeight - yuvRect.top) * ratio;
-    const convertedBottom = yuvRect.right * ratio;
-    return {
-      left: Math.round(convertedLeft),
-      top: Math.round(convertedTop),
-      right: Math.round(convertedRight),
-      bottom: Math.round(convertedBottom)
-    };
-  }
-
-  /**
    * 初始化相机预览：解析参数、设置初始缩放和摄像头、刷新预览尺寸
    * @param call - Flutter 方法调用对象
    * @param result - 方法结果回调
@@ -890,7 +601,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.methodResult = result;
 
     const rawArgsMap: Object = call.args;
-    const args = this.normalizeArgs(rawArgsMap);
+    const args = ArgsParser.normalizeArgs(rawArgsMap);
     // 逐字段提取并构造 OhosScannerParameters，避免直接类型断言
     if (args && Object.keys(args).length > 0) {
       const params: OhosScannerParameters = {};
@@ -938,47 +649,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (comp) {
       comp.onInitCameraPreviewRequested();
     }
-  }
-
-  /**
-   * 递归转换映射，将 Map 或嵌套对象转换为 Record<string, Object>
-   * @param obj - 待转换的对象
-   * @returns 转换后的对象
-   */
-  private recursivelyConvertMap(obj: Object): Object {
-    if (obj === null || typeof obj !== 'object') {
-      return obj;
-    }
-
-    // 先检查是否是数组(数组也有 forEach 方法,必须先判断)
-    if (Array.isArray(obj)) {
-      const result: Object[] = [];
-      for (let i = 0; i < obj.length; i++) {
-        result.push(this.recursivelyConvertMap(obj[i]));
-      }
-      return result;
-    }
-
-    // 检查是否是 Map 对象(有 forEach 方法但不是数组)
-    // Map 对象需要通过 forEach 遍历，Object.keys() 无法枚举 Map 的键
-    const objRecord = obj as Record<string, Object>;
-    if (typeof objRecord['forEach'] === 'function') {
-      const converted: Record<string, Object> = {};
-      const objMap = obj as Map<string, Object>;
-      objMap.forEach((value: Object, key: string) => {
-        converted[key] = this.recursivelyConvertMap(value);
-      });
-      return converted;
-    }
-
-    // 如果是普通对象
-    const converted: Record<string, Object> = {};
-    const keys = Object.keys(obj);
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
-      converted[key] = this.recursivelyConvertMap(objRecord[key]);
-    }
-    return converted;
   }
 
   /**
@@ -1104,152 +774,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 开启扫描并启动预览流
-   * @param call - Flutter 方法调用对象，包含扫码参数
-   * @param result - 方法结果回调
-   */
-  private async startScan(call: MethodCall, result: MethodResult): Promise<void> {
-    const args = this.normalizeArgs(call.args);
-    let options: MLKitScannerOptions;
-    try {
-      options = MLKitScannerOptions.fromMap(args);
-    } catch (error) {
-      result.error(
-        PluginError.INVALID_ARGUMENTS,
-        'Invalid startScan arguments: ' + JSON.stringify(error),
-        null,
-      );
-      return;
-    }
-    this.scanDelayMs = options.periodMs;
-    // 同步更新 CameraService 的解码节流间隔,保持底层解码频率与上层扫描延迟一致
-    this.getCameraService()?.setDecodeThrottleMs(this.scanDelayMs);
-    if (!this.previewState.isPausedByUser) {
-      this.flashLightStatusBeforePause = this.getFlashLightStatusSafely();
-    }
-    if (!this.isCameraInitialized) {
-      if (this.previewState.isPausedByUser) {
-        getCurrentCameraPreviewComponent()?.setScanActive(true);
-        result.success(true);
-        return;
-      }
-      result.error(PluginError.CAMERA_IS_NOT_INITIALIZED, 'Camera is not initialized', null);
-      return;
-    }
-    if (!this.surfaceId) {
-      result.error(PluginError.CAMERA_IS_NOT_INITIALIZED, 'Camera surface is not ready', null);
-      return;
-    }
-    // 处于扫描状态 或者 用户触发了pause时不做处理 只标记开启扫描
-    if (this.isScan || this.previewState.isPausedByUser) {
-      this.beginScanSession();
-      result.success(true);
-      return;
-    }
-
-    // 开启扫描,开启预览流
-    this.beginScanSession();
-    this.startScanDelayWindow();
-    if (!this.previewState.isRunning) {
-      await this.startPreview();
-    }
-    result.success(true);
-  }
-
-  /**
-   * 取消扫描，保持预览流继续运行
-   * @param result - 方法结果回调
-   */
-  private async cancelScan(result: MethodResult): Promise<void> {
-    try {
-      this.clearScanDelayTimer();
-      if (!this.isCameraInitialized) {
-        if (this.previewState.isPausedByUser) {
-          getCurrentCameraPreviewComponent()?.setScanActive(false);
-          result.success(true);
-          return;
-        }
-        result.error(PluginError.CAMERA_IS_NOT_INITIALIZED, 'Camera is not initialized', null);
-        return;
-      }
-      // cancel 只停止扫描,不重启预览流,避免卡顿与闪光灯状态抖动。
-      if (this.isScan) {
-        this.endScanSession();
-      }
-      result.success(true);
-    } catch (error) {
-      Log.e(TAG, `cancelScan error - ${error}`);
-      this.endScanSession();
-    }
-  }
-
-  /**
-   * 设置扫描延迟间隔
-   * @param call - Flutter 方法调用对象，参数为延迟毫秒数
-   * @param result - 方法结果回调
-   */
-  private setScanDelay(call: MethodCall, result: MethodResult): void {
-    // 设置扫描延迟
-    const delay: Object = call.args;
-    const delayNum: number = Number(delay);
-    if (!Number.isFinite(delayNum)) {
-      result.error(
-        PluginError.INVALID_ARGUMENTS,
-        'Invalid argument passed, Number type is expected',
-        null,
-      );
-      return;
-    }
-    if (delayNum < 0) {
-      result.error(
-        PluginError.INVALID_ARGUMENTS,
-        'Invalid argument passed, value must be >= 0',
-        null,
-      );
-      return;
-    }
-    // 将扫描延迟设置为传入值的整数部分
-    this.scanDelayMs = Math.trunc(delayNum);
-    // 同步更新 CameraService 的解码节流间隔,保持底层解码频率与上层扫描延迟一致
-    this.getCameraService()?.setDecodeThrottleMs(this.scanDelayMs);
-    result.success(true);
-  }
-
-  /**
-   * 更新预览约束：解析尺寸参数并重新计算预览尺寸和裁剪区域
-   * @param call - Flutter 方法调用对象，包含 width/height 参数
-   * @param result - 方法结果回调
-   */
-  private updateConstraints(call: MethodCall, result: MethodResult): void {
-    try {
-      const args = this.normalizeArgs(call.args);
-      const rawSize = this.parsePositiveSize(args);
-      if (!rawSize) {
-        result.error(
-          PluginError.INVALID_ARGUMENTS,
-          'Invalid constraints, positive width/height expected',
-          null,
-        );
-        return;
-      }
-      const sizeChanged = this.applyPreviewContainerSize(rawSize.width, rawSize.height);
-      if (!sizeChanged) {
-        result.success(true);
-        return;
-      }
-
-      const comp = getCurrentCameraPreviewComponent();
-      if (comp) {
-        comp.applyCropRect();
-      }
-      result.success(true);
-    } catch (error) {
-      Log.e(TAG, 'updateConstraints failed: ' + JSON.stringify(error));
-      result.error(PluginError.INVALID_ARGUMENTS, 'updateConstraints failed', null);
-    }
-  }
-
-  /**
    * 暂停相机：关闭闪光灯、标记用户暂停状态、停止预览流
    * @param result - 方法结果回调
    */
@@ -1308,7 +832,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
    * 安全获取闪光灯状态，异常时返回上次已知状态
    * @returns 闪光灯是否开启
    */
-  private getFlashLightStatusSafely(): boolean {
+  public getFlashLightStatusSafely(): boolean {
     let flashLightStatus: boolean = this.flashLightStatus;
     try {
       const service = this.getCameraService();
@@ -1403,22 +927,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 解析缩放值参数
-   * @param args - 缩放参数
-   * @returns 有效的缩放数值，无效时返回 null
-   */
-  private parseZoomValue(args: Object): number | null {
-    if (args === null || args === undefined) {
-      return null;
-    }
-    const num = Number(args);
-    if (Number.isFinite(num)) {
-      return num;
-    }
-    return null;
-  }
-
-  /**
    * 将 Flutter 的 0~1 归一化值映射为 ScanKit 的绝对变焦比
    * ScanKit: 1.0~maxZoom
    */
@@ -1452,7 +960,7 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       );
       return;
     }
-    const zoom = this.parseZoomValue(call.args);
+    const zoom = ArgsParser.parseZoomValue(call.args);
     if (zoom === null || zoom < 0 || zoom > 1) {
       result.error(
         PluginError.INVALID_ARGUMENTS,
@@ -1475,167 +983,6 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
 
     result.error(PluginError.DEVICE_HAS_NOT_ZOOM, 'Zoom is not supported on this device', null);
-  }
-
-  /**
-   * 设置扫描区域：校验参数范围并更新裁剪矩形
-   * @param call - Flutter 方法调用对象，包含 scaleWidth/scaleHeight/offsetX/offsetY 参数
-   * @param result - 方法结果回调
-   */
-  private setCropArea(call: MethodCall, result: MethodResult): void {
-    const rawArgsMap: Object = call.args;
-    const args = this.normalizeArgs(rawArgsMap);
-    const scaleWidth = Number(args['scaleWidth']);
-    const scaleHeight = Number(args['scaleHeight']);
-    const offsetX = Number(args['offsetX']);
-    const offsetY = Number(args['offsetY']);
-
-    // 参数范围校验
-    if (!Number.isFinite(scaleWidth) || scaleWidth <= 0 || scaleWidth > 1 ||
-        !Number.isFinite(scaleHeight) || scaleHeight <= 0 || scaleHeight > 1 ||
-        !Number.isFinite(offsetX) || offsetX < 0 || offsetX >= 1 ||
-        !Number.isFinite(offsetY) || offsetY < 0 || offsetY >= 1) {
-      result.error(
-        PluginError.INVALID_ARGUMENTS,
-        'Invalid crop area arguments, scaleWidth/scaleHeight should be in (0,1], offsetX/offsetY should be in [0,1)',
-        null,
-      );
-      Log.e(TAG, 'setCropArea invalid arguments: ' + JSON.stringify(args));
-      return;
-    }
-
-    const rect: CropRect = {
-      scaleWidth: scaleWidth,
-      scaleHeight: scaleHeight,
-      offsetX: offsetX,
-      offsetY: offsetY,
-    };
-    this.initialScannerParameters = this.initialScannerParameters || {};
-    this.initialScannerParameters.initialCropRect = rect;
-    const comp = getCurrentCameraPreviewComponent();
-    if (comp) {
-      comp.applyCropRect();
-    }
-
-    result.success(true);
-  }
-
-  /**
-   * 获取可用的鸿蒙摄像头列表
-   * @param result - 方法结果回调，返回包含 position 和 type 的数组
-   */
-  private getOhosAvailableCameras(result: MethodResult): void {
-    if (!this.context) {
-      result.error(PluginError.INIT_CAMERA_ERROR, 'context is undefined!', null);
-      return;
-    }
-
-    try {
-      const service = this.getCameraService();
-      if (!service) {
-        result.error(PluginError.INIT_CAMERA_ERROR, 'camera service is unavailable', null);
-        return;
-      }
-
-      const devices = service.getAvailableCameras();
-      const available: Array<Record<string, number>> = [];
-      for (const device of devices) {
-        const position = Number(device['position']);
-        const type = Number(device['type']);
-        available.push({
-          'position': position,
-          'type': type,
-        });
-      }
-      result.success(available);
-    } catch (error) {
-      result.error(PluginError.INIT_CAMERA_ERROR, 'Failed to get camera list: ' + JSON.stringify(error), null);
-    }
-  }
-
-  /**
-   * 校验 setOhosCamera 的参数，无效时返回 null 并通过 result 报错
-   * @param args - 包含 position 和 type 的键值对
-   * @param result - 方法结果回调
-   * @returns 校验通过的 OhosInitialCamera，无效时返回 null
-   */
-  private validateSetOhosCameraArgs(args: Record<string, Object>, result: MethodResult): OhosInitialCamera | null {
-    const position = Number(args['position']);
-    const type = Number(args['type']);
-    if (!Number.isFinite(position) || !Number.isFinite(type)) {
-      Log.e(TAG, `setOhosCamera invalid arguments: position=${position}, type=${type}`);
-      result.error(PluginError.INVALID_ARGUMENTS, 'Invalid camera arguments, position/type required', null);
-      return null;
-    }
-    if (!this.context) {
-      Log.e(TAG, 'setOhosCamera failed: context is undefined');
-      result.error(PluginError.INIT_CAMERA_ERROR, 'context is undefined!', null);
-      return null;
-    }
-    return { position: Math.trunc(position), type: Math.trunc(type) } as OhosInitialCamera;
-  }
-
-  /**
-   * 通过 CameraService 查找目标 cameraId，找不到时返回空串
-   * @param reqPosition - 请求的摄像头位置编码
-   * @param reqType - 请求的摄像头类型编码
-   * @param result - 方法结果回调
-   * @returns 匹配的 cameraId，未找到时返回空串
-   */
-  private queryCameraIdForSwitch(reqPosition: number, reqType: number, result: MethodResult): string {
-    try {
-      const service = this.getCameraService();
-      if (!service) {
-        Log.e(TAG, 'setOhosCamera failed: camera service is unavailable');
-        result.error(PluginError.INIT_CAMERA_ERROR, 'camera service is unavailable', null);
-        return '';
-      }
-      const cameraId = service.findCameraIdByOhosCodes(reqPosition, reqType);
-      if (!cameraId) {
-        Log.e(TAG, `setOhosCamera no camera matches: position=${reqPosition}, type=${reqType}`);
-        result.error(
-          PluginError.INVALID_ARGUMENTS,
-          `No camera matches position=${reqPosition}, type=${reqType}`,
-          null,
-        );
-        return '';
-      }
-      return cameraId;
-    } catch (error) {
-      Log.e(TAG, 'setOhosCamera query camera list failed: ' + JSON.stringify(error));
-      result.error(PluginError.INIT_CAMERA_ERROR, 'Failed to query camera list: ' + JSON.stringify(error), null);
-      return '';
-    }
-  }
-
-  /**
-   * 切换鸿蒙摄像头：校验参数、查找目标摄像头、必要时重启预览
-   * @param call - Flutter 方法调用对象，包含 position 和 type 参数
-   * @param result - 方法结果回调
-   */
-  private setOhosCamera(call: MethodCall, result: MethodResult): void {
-    const args = this.normalizeArgs(call.args);
-    const validated = this.validateSetOhosCameraArgs(args, result);
-    if (!validated) {
-      return;
-    }
-
-    const cameraId = this.queryCameraIdForSwitch(validated.position, validated.type, result);
-    if (!cameraId) {
-      return;
-    }
-    this.selectedCameraId = cameraId;
-    this.selectedCameraPositionCode = validated.position;
-    this.selectedCameraTypeCode = validated.type;
-
-    getCurrentCameraPreviewComponent()?.applyCropRect();
-
-    if (this.isCameraInitialized && this.surfaceId && !this.previewState.isPausedByUser) {
-      Log.i(TAG, 'setOhosCamera restarting preview after camera switch');
-      void this.restartPreviewAfterLayoutChange();
-    }
-
-    result.success(true);
   }
 
   /**

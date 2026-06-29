@@ -19,6 +19,7 @@ import { PermissionsUtil } from './PermissionsUtil';
 import { ScannerOverlay } from './ScannerOverlay';
 import { getCurrentMLKitScannerView, MLKitScannerView } from './MLKitScannerView';
 import { CropRect, PluginConstants, PluginError, Size, TouchPoint, TouchRecord } from './PluginConstants';
+import { FocusAnimationHelper, FocusAnimationCallbacks } from './FocusAnimationHelper';
 
 const TAG: string = '[CameraPreviewComponent:]';
 
@@ -37,14 +38,12 @@ export struct CameraPreviewComponent {
   private isTouchPressed: boolean = false;
   private lockTriggeredInCurrentTouch: boolean = false;
   private longPressTimerId: number = -1;
-  // 焦圈动画版本号，每次启动或重置动画时自增，用来让旧动画的回调自动失效。
-  private focusRingAnimationSeq: number = 0;
-  // 锁图标动画版本号
-  private lockAnimationSeq: number = 0;
   private focusPointInPreviewCache: TouchPoint | null = null;
   private lockStartPositionCache: TouchPoint | null = null;
   private lockEndPositionCache: TouchPoint = { x: 0, y: 0 };
   private hasPermission: boolean = false;
+  // 对焦动画辅助类，通过回调闭包桥接 @State 属性
+  private focusAnimationHelper: FocusAnimationHelper | null = null;
   @Prop flutterMLKitScannerView: MLKitScannerView | null = null;
   @State canRenderCamera: boolean = false;
   @State surfaceId: string = '';
@@ -196,6 +195,7 @@ export struct CameraPreviewComponent {
     currentCameraPreview = this;
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
 
+    this.initFocusAnimationHelper();
     this.registerLifecycle();
     try {
       await this.onInitCameraPreviewRequested();
@@ -211,9 +211,34 @@ export struct CameraPreviewComponent {
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.clearLongPressTimer();
-    this.resetFocusRingAnimationState();
-    this.resetLockIconAnimationState();
+    this.focusAnimationHelper?.resetFocusRingAnimationState();
+    this.focusAnimationHelper?.resetLockIconAnimationState();
     this.unregisterLifecycle();
+  }
+
+  /**
+   * 初始化对焦动画辅助类，传入所有 @State 属性的读写闭包
+   */
+  private initFocusAnimationHelper(): void {
+    const callbacks: FocusAnimationCallbacks = {
+      setShowFocusState: (v: boolean) => { this.showFocusState = v; },
+      setFocusRingOpacityState: (v: number) => { this.focusRingOpacityState = v; },
+      setShowFocusRingState: (v: boolean) => { this.showFocusRingState = v; },
+      setShowLockIconState: (v: boolean) => { this.showLockIconState = v; },
+      setLockIconOpacityState: (v: number) => { this.lockIconOpacityState = v; },
+      setLockIconLeftState: (v: number) => { this.lockIconLeftState = v; },
+      setLockIconTopState: (v: number) => { this.lockIconTopState = v; },
+      setIsLockIconSettledState: (v: boolean) => { this.isLockIconSettledState = v; },
+      setIsFocusLockedState: (v: boolean) => { this.isFocusLockedState = v; },
+      refreshFocusRingDisplayState: () => { this.refreshFocusRingDisplayState(); },
+      getUIContext: () => { return this.getUIContext(); },
+      getIsFocusLockedState: () => { return this.isFocusLockedState; },
+      getShowLockIconState: () => { return this.showLockIconState; },
+      getIsLockIconSettledState: () => { return this.isLockIconSettledState; },
+      getLockStartPositionCache: () => { return this.lockStartPositionCache; },
+      getLockEndPositionCache: () => { return this.lockEndPositionCache; },
+    };
+    this.focusAnimationHelper = new FocusAnimationHelper(callbacks);
   }
 
   /**
@@ -539,7 +564,7 @@ export struct CameraPreviewComponent {
       return;
     }
     // 轻触对焦：显示一次淡入淡出焦圈，不显示锁定图标
-    this.updateFocusHint(false);
+    this.focusAnimationHelper?.updateFocusHint(false);
     this.flutterMLKitScannerView.handleUserFocusGesture(
       focusPoint.x,
       focusPoint.y,
@@ -605,7 +630,7 @@ export struct CameraPreviewComponent {
       if (!focusPoint) {
         return;
       }
-      this.updateFocusHint(true);
+      this.focusAnimationHelper?.updateFocusHint(true);
       this.flutterMLKitScannerView?.handleUserFocusGesture(
         focusPoint.x,
         focusPoint.y,
@@ -614,182 +639,6 @@ export struct CameraPreviewComponent {
         true,
       );
     }, PluginConstants.LONG_PRESS_THRESHOLD_MS) as number;
-  }
-
-  /**
-   * 重置对焦环动画状态，自增序列号使旧动画回调失效
-   */
-  private resetFocusRingAnimationState(): void {
-    // 每次重置都自增动画序列号，确保过期动画回调不再修改状态
-    this.focusRingAnimationSeq++;
-    this.showFocusState = false;
-    this.focusRingOpacityState = 0;
-    this.refreshFocusRingDisplayState();
-  }
-
-  /**
-  * 播放焦圈提示动画：先从 0 淡入到最大透明度，再淡出到完全透明，最后隐藏焦圈。
-  * 该动画同时用于轻触对焦提示，以及长按锁焦前的视觉反馈。
-  */ 
-  private startFocusRingAnim(): void {
-    const animationSeq = ++this.focusRingAnimationSeq;
-    this.showFocusState = true;
-    this.refreshFocusRingDisplayState();
-    // 第一步：立即将焦圈透明度设为0，为后续淡入做准备
-    this.focusRingOpacityState = 0;
-    // 第二步：焦圈从0淡入到最大透明度，形成“出现”动画
-    this.getUIContext().animateTo({
-      duration: PluginConstants.FOCUS_RING_FADE_DURATION_MS,
-      curve: Curve.Linear,
-      onFinish: () => {
-        // 若动画期间有新动画启动，则本次回调失效
-        if (animationSeq !== this.focusRingAnimationSeq) {
-          return;
-        }
-        // 第三步：焦圈从最大透明度淡出到0，形成“消失”动画
-        this.getUIContext().animateTo({
-          duration: PluginConstants.FOCUS_RING_FADE_DURATION_MS,
-          curve: Curve.Linear,
-          onFinish: () => {
-            // 若动画期间有新动画启动，则本次回调失效
-            if (animationSeq !== this.focusRingAnimationSeq) {
-              return;
-            }
-            // 动画结束，隐藏焦圈
-            this.showFocusState = false;
-            this.refreshFocusRingDisplayState();
-          },
-        }, () => {
-          // 淡出动画：透明度降为0
-          this.focusRingOpacityState = 0;
-          this.refreshFocusRingDisplayState();
-        });
-      },
-    }, () => {
-      // 淡入动画：透明度升至最大
-      this.focusRingOpacityState = PluginConstants.FOCUS_RING_MAX_OPACITY;
-      this.refreshFocusRingDisplayState();
-    });
-  }
-
-  /**
-  * 播放锁焦图标入场动画：图标先在焦圈左侧淡入，再移动到预览左上角的固定停靠位。
-  * 只有从“未锁定”进入“锁定”时才会触发，重复长按已锁定场景不会重复播放该动画。
-  */ 
-  private startFocusLockAnim(): void {
-    const start = this.lockStartPositionCache;
-    if (!start) {
-      return;
-    }
-    const animationSeq = ++this.lockAnimationSeq;
-    this.showLockIconState = true;
-    this.isLockIconSettledState = false;
-    // 第一步：立即将锁图标放到起始点并设为透明，为后续动画做准备
-    this.lockIconLeftState = start.x;
-    this.lockIconTopState = start.y;
-    this.lockIconOpacityState = 0;
-    // 第二步：锁图标淡入（透明度0→1），停留在起始点
-    this.getUIContext().animateTo({
-      duration: PluginConstants.LOCK_FADE_IN_DURATION_MS,
-      curve: Curve.Linear,
-      onFinish: () => {
-        // 若动画期间有新动画启动或已解锁，则本次回调失效
-        if (animationSeq !== this.lockAnimationSeq || !this.isFocusLockedState) {
-          return;
-        }
-        // 第三步：锁图标从起始点平滑移动到左上角目标位
-        this.getUIContext().animateTo({
-          duration: PluginConstants.LOCK_MOVE_DURATION_MS,
-          curve: Curve.EaseOut,
-          onFinish: () => {
-            // 若动画期间有新动画启动或已解锁，则本次回调失效
-            if (animationSeq !== this.lockAnimationSeq || !this.isFocusLockedState) {
-              return;
-            }
-            // 动画结束，标记锁图标已到达目标位
-            this.isLockIconSettledState = true;
-            this.refreshFocusRingDisplayState();
-          },
-        }, () => {
-          // 移动动画：位置变为目标点
-          this.lockIconLeftState = this.lockEndPositionCache.x;
-          this.lockIconTopState = this.lockEndPositionCache.y;
-        });
-      },
-    }, () => {
-      // 淡入动画：透明度升至1
-      this.lockIconOpacityState = 1;
-    });
-  }
-
-  /**
-   * 播放锁焦图标退场动画：淡出并隐藏，同时把位置复位到起始点
-   */
-  private fadeOutLockIcon(): void {
-    const animationSeq = ++this.lockAnimationSeq;
-    this.isLockIconSettledState = false;
-    this.refreshFocusRingDisplayState();
-    if (!this.showLockIconState) {
-      this.lockIconOpacityState = 0;
-      return;
-    }
-    // 锁图标淡出动画：透明度1→0，结束后隐藏并复位到起始点
-    this.getUIContext().animateTo({
-      duration: PluginConstants.LOCK_FADE_OUT_DURATION_MS,
-      curve: Curve.Linear,
-      onFinish: () => {
-        // 若动画期间有新动画启动，则本次回调失效
-        if (animationSeq !== this.lockAnimationSeq) {
-          return;
-        }
-        // 动画结束，隐藏锁图标并复位位置
-        this.showLockIconState = false;
-        this.lockIconOpacityState = 0;
-        if (this.lockStartPositionCache) {
-          this.lockIconLeftState = this.lockStartPositionCache.x;
-          this.lockIconTopState = this.lockStartPositionCache.y;
-        }
-      },
-    }, () => {
-      // 淡出动画：透明度降为0
-      this.lockIconOpacityState = 0;
-    });
-  }
-
-  /**
-   * 更新对焦提示状态：根据是否需要锁定切换对焦环和锁定图标的显示，并启动相应动画
-   * @param needLock - 是否需要锁定焦点（长按为 true，轻触为 false）
-   */
-  private updateFocusHint(needLock: boolean): void {
-    this.startFocusRingAnim();
-    const isAlreadyLocked =
-      needLock && this.isFocusLockedState && this.showLockIconState && this.isLockIconSettledState;
-    this.isFocusLockedState = needLock;
-    this.refreshFocusRingDisplayState();
-    if (needLock) {
-      if (!isAlreadyLocked) {
-        this.startFocusLockAnim();
-      }
-    } else {
-      this.fadeOutLockIcon();
-      this.isFocusLockedState = false;
-      this.refreshFocusRingDisplayState();
-      this.resetLockIconAnimationState();
-    }
-  }
-
-  /**
-   * 重置锁定图标动画状态，自增序列号使旧动画回调失效
-   */
-  private resetLockIconAnimationState(): void {
-    this.lockAnimationSeq++;
-    this.showLockIconState = false;
-    this.isLockIconSettledState = false;
-    this.lockIconOpacityState = 0;
-    if (this.lockStartPositionCache) {
-      this.lockIconLeftState = this.lockStartPositionCache.x;
-      this.lockIconTopState = this.lockStartPositionCache.y;
-    }
   }
 
   /**

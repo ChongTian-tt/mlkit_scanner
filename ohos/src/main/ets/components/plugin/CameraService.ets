@@ -17,15 +17,16 @@ import image from '@ohos.multimedia.image';
 import { camera } from '@kit.CameraKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { Log, MethodResult } from '@ohos/flutter_ohos';
-import { detectBarcode, scanBarcode, scanCore } from '@kit.ScanKit';
+import { scanBarcode } from '@kit.ScanKit';
 import { PluginConstants, Size } from './PluginConstants';
+import { CameraDeviceManager } from './CameraDeviceManager';
+import { ScanDecoder } from './ScanDecoder';
 
 const TAG: string = '[CameraService]:';
 
 export class CameraService {
-  public cameraManager: camera.CameraManager | undefined = undefined;
-  private camerasLoadedAtMs: number = 0;
-  private camerasDevices: Array<camera.CameraDevice> = [];
+  private deviceManager: CameraDeviceManager;
+  public decoder: ScanDecoder;
   // 当前使用的相机设备
   private currentCameraDevice: camera.CameraDevice | undefined = undefined;
   // 相机设备输入对象
@@ -37,31 +38,17 @@ export class CameraService {
   // 普通拍照模式会话类
   private photoSession: camera.PhotoSession | null = null;
   private context: Context | null = null;
-  // 标记是否已停止，避免在停止后继续处理预览帧导致错误
-  private isStop: boolean = false;
-  // 解码节流，避免过于频繁地对预览帧进行解码，导致性能问题和重复结果
-  private lastDecodeAtMs: number = 0;
-  // 解码节流间隔（毫秒），由外部通过 setDecodeThrottleMs 注入，默认 800ms
-  private decodeThrottleMs: number = 800;
-  // imageArrival 事件回调引用，用于 off() 取消订阅
-  private imageArrivalCallback: (() => void) | null = null;
   // 由外部注入的闪光灯状态读写器（共享 MLKitScannerView 中的状态）
   // 非 readonly 以便在 dispose 时通过 clearSharedStateRefs() 断开循环引用
   private getSharedFlashStatus: () => boolean;
   private setSharedFlashStatus: (status: boolean) => void;
-  // 图像接收器，用于接收相机预览帧并进行扫码解码
-  public imageReceiver: image.ImageReceiver;
-  // 标记是否已释放 ImageReceiver，避免重复释放导致错误
-  private isImageReceiverReleased: boolean = false;
-  // ImageReceiver 是否在上一次 ensureImageReceiver 调用中被重建
-  // 如果被重建，调用方需重置帧监听绑定标志以重新绑定回调
-  public imageReceiverRecreated: boolean = false;
-  // 当前预览配置的尺寸，单位是像素。初始值为默认预览尺寸，后续会根据实际相机 profile 更新。
-  private previewProfileSize: Size = {
-    width: PluginConstants.DEFAULT_PREVIEW_WIDTH,
-    height: PluginConstants.DEFAULT_PREVIEW_HEIGHT,
-  };
-  private preferredPreviewProfileCache: Record<string, camera.Profile> = {};
+
+  /**
+   * 获取相机管理器实例（委托到 CameraDeviceManager）
+   */
+  get cameraManager(): camera.CameraManager | undefined {
+    return this.deviceManager.cameraManager;
+  }
 
   /**
    * 创建 CameraService 实例
@@ -80,328 +67,11 @@ export class CameraService {
     this.getSharedFlashStatus = getSharedFlashStatus ?? (() => false);
     this.setSharedFlashStatus = setSharedFlashStatus ?? ((_: boolean) => {
     });
-    const receiverFormat = imgReceiver?.format ?? image.ImageFormat.JPEG;
-    const receiverCapacity = imgReceiver?.capacity ?? 1;
-    this.imageReceiver = this.createImageReceiver(this.previewProfileSize, receiverFormat, receiverCapacity);
-  }
-
-  /**
-   * 创建 ImageReceiver 实例
-   * @param size - 预览尺寸
-   * @param format - 图像格式
-   * @param capacity - 缓冲区容量
-   * @returns ImageReceiver 实例
-   */
-  private createImageReceiver(size: Size, format: number, capacity: number): image.ImageReceiver {
-    const previewSize: camera.Size = {
-      width: size.width,
-      height: size.height,
-    } as camera.Size;
-    return image.createImageReceiver(previewSize, format, capacity);
-  }
-
-  // 外部调用以更新预览配置时，确保 ImageReceiver 的尺寸和格式与预览输出匹配，否则可能导致无法正确接收预览帧。
-  /**
-   * 确保ImageReceiver可用，如果尺寸变化则创建新的
-   * 创建新 ImageReceiver 前会取消旧事件订阅，重建后设置 imageReceiverRecreated=true
-   * @param size - 期望的预览尺寸
-   */
-  private async ensureImageReceiver(size: Size): Promise<void> {
-    if (
-      !this.isImageReceiverReleased &&
-      this.previewProfileSize.width === size.width &&
-      this.previewProfileSize.height === size.height
-    ) {
-      return;
-    }
-
-    // 创建新 ImageReceiver 前，先取消旧的事件订阅，防止回调在释放后触发
-    this.offImageArrival();
-
-    try {
-      if (!this.isImageReceiverReleased) {
-        await this.imageReceiver.release();
-        this.isImageReceiverReleased = true;
-      }
-    } catch (error) {
-      Log.w(TAG, 'ensureImageReceiver release skipped: ' + JSON.stringify(error));
-    }
-
-    this.previewProfileSize = {
-      width: size.width,
-      height: size.height,
-    };
-    this.imageReceiver = this.createImageReceiver(this.previewProfileSize, image.ImageFormat.JPEG, 1);
-    this.isImageReceiverReleased = false;
-    this.imageReceiverRecreated = true;
-  }
-
-  /**
-   * 获取预览 Profile 缓存键
-   * @param cameraId - 可选的相机设备 ID
-   * @returns 缓存键字符串
-   */
-  private getPreviewProfileCacheKey(cameraId?: string): string {
-    if (cameraId && cameraId.length > 0) {
-      return cameraId;
-    }
-    return PluginConstants.DEFAULT_CAMERA_CACHE_KEY;
-  }
-
-  /**
-   * 解析相机设备：按 cameraId 查找，未指定时返回默认相机
-   * @param cameraId - 可选的相机设备 ID
-   * @returns 匹配的 CameraDevice，未找到时返回 undefined
-   */
-  private resolveCameraDevice(cameraId?: string): camera.CameraDevice | undefined {
-    try {
-      if (!this.safeLoadCameras()) {
-        return undefined;
-      }
-    } catch (error) {
-      Log.e(TAG, 'resolveCameraDevice: ' + JSON.stringify(error));
-      return undefined;
-    }
-    if (cameraId) {
-      const matched = this.camerasDevices.find((dev) => dev.cameraId === cameraId);
-      if (matched) {
-        return matched;
-      }
-    }
-    return this.camerasDevices[0];
-  }
-
-  /**
-   * 给定 CameraDevice，从 getSupportedOutputCapability 查找首选预览 Profile
-   * 优先匹配默认分辨率，未匹配时选择最大分辨率作为 fallback
-   * @param device - 相机设备
-   * @returns 预览 Profile，未找到时返回 undefined
-   */
-  private getPreferredPreviewProfile(device: camera.CameraDevice): camera.Profile | undefined {
-    const cachedProfile = this.preferredPreviewProfileCache[device.cameraId];
-    if (cachedProfile) {
-      return cachedProfile;
-    }
-    if (!this.cameraManager) {
-      return undefined;
-    }
-    try {
-      const profiles = this.cameraManager.getSupportedOutputCapability(
-        device,
-        camera.SceneMode.NORMAL_PHOTO,
-      );
-      const previewProfiles = profiles.previewProfiles;
-      if (!previewProfiles || previewProfiles.length === 0) {
-        Log.e(TAG, 'getPreferredPreviewProfile no preview profiles');
-        return undefined;
-      }
-
-      const preferred = previewProfiles.find((profile: camera.Profile) => {
-        return (
-          profile.size.width === PluginConstants.DEFAULT_PREVIEW_WIDTH &&
-          profile.size.height === PluginConstants.DEFAULT_PREVIEW_HEIGHT
-        );
-      });
-      if (preferred) {
-        this.preferredPreviewProfileCache[device.cameraId] = preferred;
-        return preferred;
-      }
-      // 没有找到完全匹配的预览配置，按尺寸从大到小排序，选择最大的那个作为 fallback
-      const sorted = [...previewProfiles].sort((a: camera.Profile, b: camera.Profile) => {
-        return (b.size.width * b.size.height) - (a.size.width * a.size.height);
-      });
-      const fallback = sorted[0];
-      this.preferredPreviewProfileCache[device.cameraId] = fallback;
-      return fallback;
-    } catch (error) {
-      Log.e(TAG, 'getPreferredPreviewProfile failed: ' + JSON.stringify(error));
-      return undefined;
-    }
-  }
-
-  /**
-   * 通过 cameraId 查找相机设备，获取首选预览 Profile 并返回 Size
-   * @param cameraId - 可选的相机设备ID，不传则使用默认相机
-   * @returns 预览尺寸，未找到时返回 null
-   */
-  public getPreferredPreviewSize(cameraId?: string): Size | null {
-    const cacheKey = this.getPreviewProfileCacheKey(cameraId);
-    const cachedProfile = this.preferredPreviewProfileCache[cacheKey];
-    if (cachedProfile) {
-      return {
-        width: cachedProfile.size.width,
-        height: cachedProfile.size.height,
-      };
-    }
-    const device = this.resolveCameraDevice(cameraId);
-    if (!device) {
-      return null;
-    }
-    const profile = this.getPreferredPreviewProfile(device);
-    if (!profile) {
-      return null;
-    }
-    const resolvedSize: Size = {
-      width: profile.size.width,
-      height: profile.size.height,
-    };
-
-    return resolvedSize;
-  }
-
-  /**
-   * 安全加载相机列表，带缓存和错误处理
-   * @returns 是否成功加载相机列表
-   * @throws 当 context 不可用或相机管理器创建失败时抛出错误
-   */
-  private safeLoadCameras(): boolean {
-    if (!this.context) {
-      throw new Error('safeLoadCameras failed: context is not available');
-    }
-
-    const now = Date.now();
-    const useCache =
-      this.cameraManager !== undefined &&
-        this.camerasDevices.length > 0 &&
-        now - this.camerasLoadedAtMs < PluginConstants.CAMERA_CACHE_TTL_MS;
-    if (useCache) {
-      return true;
-    }
-
-    try {
-      if (!this.cameraManager) {
-        this.cameraManager = camera.getCameraManager(this.context);
-      }
-      // 使用 getCameraDevices(position, types, connectType) 按位置+类型+连接方式查询相机
-      // 遍历所有 position 和 type 组合，收集所有可用相机
-      this.camerasDevices = this.queryAllCameraDevices();
-      this.camerasLoadedAtMs = now;
-      Log.i(TAG, `safeLoadCameras: found ${this.camerasDevices.length} camera(s)`);
-      return this.camerasDevices.length > 0;
-    } catch (error) {
-      Log.e(TAG, 'safeLoadCameras failed: ' + JSON.stringify(error));
-      this.camerasLoadedAtMs = 0;
-      throw new Error('safeLoadCameras failed: ' + JSON.stringify(error));
-    }
-  }
-
-  /**
-   * 遍历所有 position × type 组合查询相机设备，connectType 使用内置连接
-   * @returns 去重后的相机设备数组
-   */
-  private queryAllCameraDevices(): Array<camera.CameraDevice> {
-    let allDevices: Array<camera.CameraDevice> = [];
-    let knownCameraIds: Set<string> = new Set();
-    const positions: Array<camera.CameraPosition> = [
-      camera.CameraPosition.CAMERA_POSITION_UNSPECIFIED,
-      camera.CameraPosition.CAMERA_POSITION_BACK,
-      camera.CameraPosition.CAMERA_POSITION_FRONT,
-    ];
-    const types: Array<camera.CameraType> = [
-      camera.CameraType.CAMERA_TYPE_DEFAULT,
-      camera.CameraType.CAMERA_TYPE_WIDE_ANGLE,
-      camera.CameraType.CAMERA_TYPE_ULTRA_WIDE,
-      camera.CameraType.CAMERA_TYPE_TELEPHOTO,
-      camera.CameraType.CAMERA_TYPE_TRUE_DEPTH,
-    ];
-
-    for (const pos of positions) {
-      for (const type of types) {
-        try {
-          const devices = this.cameraManager?.getCameraDevices(
-            pos, [type], camera.ConnectionType.CAMERA_CONNECTION_BUILT_IN
-          );
-          if (devices && devices.length > 0) {
-            for (const dev of devices) {
-              if (!knownCameraIds.has(dev.cameraId)) {
-                knownCameraIds.add(dev.cameraId);
-                allDevices.push(dev);
-                Log.i(TAG,
-                  `queryAllCameraDevices: found cameraId=${dev.cameraId}, ` +
-                  `position=${dev.cameraPosition}, type=${dev.cameraType}`);
-              }
-            }
-          }
-        } catch (error) {
-          // 某些 position+type 组合可能不支持，忽略即可
-        }
-      }
-    }
-
-    return allDevices;
-  }
-
-  /**
-   * 获取可用的相机列表，包含 cameraId、position、type 信息
-   * @returns 相机信息数组
-   */
-  public getAvailableCameras(): Array<Record<string, number | string>> {
-    try {
-      if (!this.safeLoadCameras()) {
-        Log.w(TAG, 'getAvailableCameras: safeLoadCameras returned false, returning empty');
-        return [];
-      }
-    } catch (error) {
-      Log.e(TAG, 'getAvailableCameras: ' + JSON.stringify(error));
-      return [];
-    }
-
-    const result: Array<Record<string, number | string>> = [];
-    for (const device of this.camerasDevices) {
-      Log.i(TAG,
-        `getAvailableCameras: cameraId=${device.cameraId}, ` +
-        `position=${device.cameraPosition}, type=${device.cameraType}`);
-      result.push({
-        'cameraId': device.cameraId,
-        'position': device.cameraPosition,
-        'type': device.cameraType,
-      });
-    }
-    Log.i(TAG, `getAvailableCameras: total ${result.length} camera(s) found`);
-
-    return result;
-  }
-
-  /**
-   * 根据 Dart 侧传入的 position 和 type，查找最匹配的 cameraId
-   * 优先级为 position+type > position > 任意可用
-   * @param positionCode - 相机位置编码
-   * @param typeCode - 相机类型编码
-   * @returns 匹配的 cameraId，无可用相机时返回 undefined
-   */
-  public findCameraIdByOhosCodes(positionCode: number, typeCode: number): string | undefined {
-    const cameras = this.getAvailableCameras();
-    if (cameras.length === 0) {
-      return undefined;
-    }
-
-    const strict = cameras.find((c) => c['position'] === positionCode && c['type'] === typeCode);
-    if (strict) {
-      return strict['cameraId'] as string;
-    }
-
-    const positionOnly = cameras.find((c) => c['position'] === positionCode);
-    if (positionOnly) {
-      return positionOnly['cameraId'] as string;
-    }
-
-    return cameras[0]['cameraId'] as string;
-  }
-
-  /**
-   * 创建相机设备，查询所有可用相机并缓存
-   * @param cameraManager - 相机管理器实例
-   */
-  async createCamera(cameraManager: camera.CameraManager): Promise<void> {
-    this.cameraManager = cameraManager;
-    try {
-      this.camerasDevices = this.queryAllCameraDevices();
-      this.camerasLoadedAtMs = Date.now();
-    } catch (error) {
-      Log.e(TAG, 'createCamera failed: ' + JSON.stringify(error));
-      this.camerasDevices = [];
-      this.camerasLoadedAtMs = 0;
-    }
+    this.deviceManager = new CameraDeviceManager(context);
+    this.decoder = new ScanDecoder(
+      { width: PluginConstants.DEFAULT_PREVIEW_WIDTH, height: PluginConstants.DEFAULT_PREVIEW_HEIGHT },
+      imgReceiver,
+    );
   }
 
   /**
@@ -412,7 +82,7 @@ export class CameraService {
    */
   async initCamera(XComponentSurfaceId: string, cameraId?: string): Promise<boolean> {
     try {
-      if (!this.safeLoadCameras() || !this.cameraManager) {
+      if (!this.deviceManager.safeLoadCameras() || !this.deviceManager.cameraManager) {
         Log.e(TAG, 'initCamera failed: camera manager unavailable');
         return false;
       }
@@ -421,7 +91,7 @@ export class CameraService {
       return false;
     }
 
-    const device = this.resolveCameraDevice(cameraId);
+    const device = this.deviceManager.resolveCameraDevice(cameraId);
     if (!device) {
       Log.e(TAG, 'initCamera failed: camera device unavailable');
       return false;
@@ -433,19 +103,19 @@ export class CameraService {
       await this.releaseSessionResources();
       this.currentCameraDevice = device;
 
-      const previewProfile = this.validateAndGetPreviewProfile();
+      const previewProfile = this.deviceManager.validateAndGetPreviewProfile(device);
       if (!previewProfile) {
         return false;
       }
 
-      await this.ensureImageReceiver({
+      await this.decoder.ensureImageReceiver({
         width: previewProfile.size.width,
         height: previewProfile.size.height,
       });
 
       await this.configurePhotoSession(previewProfile, XComponentSurfaceId);
       this.setFocusMode(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO);
-      this.isStop = false;
+      this.decoder.setStop(false);
       return true;
     } catch (error) {
       // 失败时释放已创建的资源
@@ -456,37 +126,18 @@ export class CameraService {
   }
 
   /**
-   * 校验相机模式并获取预览 Profile
-   * @returns 预览 Profile，不支持拍照模式或未找到 Profile 时返回 null
-   */
-  private validateAndGetPreviewProfile(): camera.Profile | null {
-    const sceneModes = this.cameraManager!.getSupportedSceneModes(this.currentCameraDevice!);
-    const supportPhoto = sceneModes.indexOf(camera.SceneMode.NORMAL_PHOTO) >= 0;
-    if (!supportPhoto) {
-      Log.e(TAG, 'photo mode not supported');
-      return null;
-    }
-    const previewProfile = this.getPreferredPreviewProfile(this.currentCameraDevice!);
-    if (!previewProfile) {
-      Log.e(TAG, 'preview profile not found');
-      return null;
-    }
-    return previewProfile;
-  }
-
-  /**
    * 配置相机会话：创建输入/输出、提交并启动
    * @param previewProfile - 预览 Profile
    * @param surfaceId - XComponent 渲染表面 ID
    */
   private async configurePhotoSession(previewProfile: camera.Profile, surfaceId: string): Promise<void> {
-    this.previewOutput = this.cameraManager!.createPreviewOutput(previewProfile, surfaceId);
-    const imageSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
-    this.previewOutput2 = this.cameraManager!.createPreviewOutput(previewProfile, imageSurfaceId);
-    this.cameraInput = this.cameraManager!.createCameraInput(this.currentCameraDevice!);
+    this.previewOutput = this.deviceManager.cameraManager!.createPreviewOutput(previewProfile, surfaceId);
+    const imageSurfaceId = await this.decoder.imageReceiver.getReceivingSurfaceId();
+    this.previewOutput2 = this.deviceManager.cameraManager!.createPreviewOutput(previewProfile, imageSurfaceId);
+    this.cameraInput = this.deviceManager.cameraManager!.createCameraInput(this.currentCameraDevice!);
     await this.cameraInput.open();
 
-    this.photoSession = this.cameraManager!.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.PhotoSession;
+    this.photoSession = this.deviceManager.cameraManager!.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.PhotoSession;
     this.photoSession.beginConfig();
     this.photoSession.addInput(this.cameraInput);
     this.photoSession.addOutput(this.previewOutput);
@@ -582,7 +233,7 @@ export class CameraService {
   /**
    * 将预览坐标转换到 Focus.setFocusPoint 所需坐标系。
    *
-   * HarmonyOS 对焦点坐标系定义：以“充电口在右侧”的横屏方向为基准。
+   * HarmonyOS 对焦点坐标系定义：以"充电口在右侧"的横屏方向为基准。
    * 本插件预览默认按竖屏展示，因此使用官方建议转换：{x, y} -> {y/h, 1-x/w}。
    */
   private toFocusPointFromPreview(x: number, y: number, width: number, height: number): camera.Point {
@@ -621,7 +272,7 @@ export class CameraService {
       this.photoSession.setFocusPoint(focusPoint);
 
       const targetMode = needLock
-        // 对焦锁定 
+        // 对焦锁定
         ? camera.FocusMode.FOCUS_MODE_LOCKED
         // 自动对焦
         : camera.FocusMode.FOCUS_MODE_AUTO;
@@ -786,9 +437,9 @@ export class CameraService {
     try {
       // 停止会话工作，通过注册回调函数获取结果
       await this.photoSession?.stop();
-      this.isStop = true;
+      this.decoder.setStop(true);
       // 显式取消 imageArrival 订阅，避免后台切换时回调在已停止状态下触发
-      this.offImageArrival();
+      this.decoder.offImageArrival();
     } catch (error) {
       Log.e(TAG, 'stopCamera failed: ' + JSON.stringify(error));
     }
@@ -799,7 +450,7 @@ export class CameraService {
    * @param isStop - 是否停止
    */
   async preFrontRelease(isStop: boolean): Promise<void> {
-    this.isStop = isStop;
+    this.decoder.setStop(isStop);
     try {
       // 释放会话资源，通过注册回调函数获取结果
       await this.releaseSessionResources();
@@ -813,17 +464,12 @@ export class CameraService {
    */
   async releaseCamera(): Promise<void> {
     try {
-      this.isStop = true;
-      this.offImageArrival();
+      this.decoder.setStop(true);
+      this.decoder.offImageArrival();
       await this.releaseSessionResources();
-      if (!this.isImageReceiverReleased) {
-        this.isImageReceiverReleased = true;
-        await this.imageReceiver.release();
-      }
+      await this.decoder.releaseImageReceiver();
       // 显式清理缓存数据和系统资源引用
-      this.preferredPreviewProfileCache = {};
-      this.camerasDevices = [];
-      this.cameraManager = undefined;
+      this.deviceManager.releaseDeviceManager();
     } catch (error) {
       Log.w(TAG, 'releaseCamera skipped: ' + JSON.stringify(error));
     }
@@ -837,121 +483,73 @@ export class CameraService {
     this.setSharedFlashStatus = (_: boolean) => {};
   }
 
+  // ========== 委托方法（CameraDeviceManager） ==========
+
   /**
-   * 取消 imageArrival 事件订阅，防止回调在释放后触发和循环引用
+   * 通过 cameraId 查找相机设备，获取首选预览 Profile 并返回 Size
+   * @param cameraId - 可选的相机设备ID，不传则使用默认相机
+   * @returns 预览尺寸，未找到时返回 null
    */
-  offImageArrival(): void {
-    if (this.imageArrivalCallback) {
-      try {
-        this.imageReceiver.off('imageArrival', this.imageArrivalCallback);
-      } catch (error) {
-        Log.w(TAG, 'offImageArrival skipped: ' + JSON.stringify(error));
-      }
-      this.imageArrivalCallback = null;
-    }
+  public getPreferredPreviewSize(cameraId?: string): Size | null {
+    return this.deviceManager.getPreferredPreviewSize(cameraId);
   }
 
   /**
-   * 注册预览帧到达的回调函数，在回调中读取预览帧图像并进行扫码解码
+   * 获取可用的相机列表，包含 cameraId、position、type 信息
+   * @returns 相机信息数组
+   */
+  public getAvailableCameras(): Array<Record<string, number | string>> {
+    return this.deviceManager.getAvailableCameras();
+  }
+
+  /**
+   * 根据 Dart 侧传入的 position 和 type，查找最匹配的 cameraId
+   * 优先级为 position+type > position > 任意可用
+   * @param positionCode - 相机位置编码
+   * @param typeCode - 相机类型编码
+   * @returns 匹配的 cameraId，无可用相机时返回 undefined
+   */
+  public findCameraIdByOhosCodes(positionCode: number, typeCode: number): string | undefined {
+    return this.deviceManager.findCameraIdByOhosCodes(positionCode, typeCode);
+  }
+
+  /**
+   * 创建相机设备，查询所有可用相机并缓存
+   * @param cameraManager - 相机管理器实例
+   */
+  async createCamera(cameraManager: camera.CameraManager): Promise<void> {
+    await this.deviceManager.createCamera(cameraManager);
+  }
+
+  // ========== 委托属性（ScanDecoder） ==========
+
+  /**
+   * 获取 ImageReceiver 实例（委托到 ScanDecoder）
+   */
+  public get imageReceiver(): image.ImageReceiver {
+    return this.decoder.imageReceiver;
+  }
+
+  /**
+   * 获取 ImageReceiver 是否被重建（委托到 ScanDecoder）
+   */
+  public get imageReceiverRecreated(): boolean {
+    return this.decoder.imageReceiverRecreated;
+  }
+
+  /**
+   * 注册预览帧到达的回调函数（委托到 ScanDecoder）
    * @param scanCallback - 扫码结果回调，接收 ScanResult 对象
    */
   onImageArrival(scanCallback: (result: scanBarcode.ScanResult) => void): void {
-    // 先取消旧监听器
-    this.offImageArrival();
-
-    this.imageArrivalCallback = () => {
-      if (this.isStop) {
-        return;
-      }
-      try {
-        // 从ImageReceiver读取下一张图片
-        this.imageReceiver.readNextImage((err: BusinessError, nextImage: image.Image) => {
-          if (err || nextImage === undefined) {
-            Log.e(TAG, 'onImageArrival readNextImage failed');
-            return;
-          }
-          // 根据图像的组件类型从图像中获取组件缓存
-          nextImage.getComponent(image.ComponentType.JPEG,
-            async (compErr: BusinessError, imgComponent: image.Component) => {
-            if (compErr || imgComponent === undefined) {
-              Log.e(TAG, 'onImageArrival getComponent(JPEG) failed: ' + JSON.stringify(compErr));
-              await nextImage.release();
-              return;
-            }
-            if (imgComponent.byteBuffer as ArrayBuffer) {
-              // 对图片进行解码
-              await this.decodeImageBuffer(
-                imgComponent, nextImage.size.width, nextImage.size.height,
-                scanCallback, nextImage
-              );
-            } else {
-              await nextImage.release();
-            }
-          });
-        });
-      } catch (error) {
-        Log.e(TAG, 'imageArrivalCallback unhandled: ' + JSON.stringify(error));
-      }
-    };
-    this.imageReceiver.on('imageArrival', this.imageArrivalCallback);
+    this.decoder.onImageArrival(scanCallback);
   }
 
   /**
-   * 使用ScanKit解码图像缓冲区中的条码
-   * @param imgComponent - 图像组件数据
-   * @param width - 图像宽度
-   * @param height - 图像高度
-   * @param scanCallback - 扫码结果回调
-   * @param nextImage - 待释放的Image对象
-   */
-  async decodeImageBuffer(
-    imgComponent: image.Component,
-    width: number,
-    height: number,
-    scanCallback: (result: scanBarcode.ScanResult) => void,
-    nextImage: image.Image
-  ): Promise<void> {
-    const now = Date.now();
-    if (now - this.lastDecodeAtMs < this.decodeThrottleMs) {
-      await nextImage.release();
-      return;
-    }
-    this.lastDecodeAtMs = now;
-
-    // 构造扫码解码需要的 ByteImage 对象，包含图像数据的字节缓冲区、图像宽高和格式等信息
-    const byteImg: detectBarcode.ByteImage = {
-      byteBuffer: imgComponent.byteBuffer,
-      width: width,
-      height: height,
-      format: detectBarcode.ImageFormat.NV21,
-    };
-    const options: scanBarcode.ScanOptions = {
-      scanTypes: [scanCore.ScanType.ALL],
-      enableMultiMode: true,
-      enableAlbum: false,
-    };
-
-    detectBarcode.decodeImage(byteImg, options).then((detectResult: detectBarcode.DetectResult) => {
-      if (detectResult.scanResults.length > 0) {
-        const res: scanBarcode.ScanResult = detectResult.scanResults[0];
-        if (res && res.originalValue) {
-          const resultMap = res;
-          resultMap['frameHeight'] = height;
-          scanCallback(res);
-        }
-      }
-    }).catch((error: BusinessError) => {
-      Log.e(TAG, 'decodeImageBuffer failed: ' + error.message);
-    }).finally(async () => {
-      await nextImage.release();
-    });
-  }
-
-  /**
-   * 设置解码节流间隔，与上层 scanDelayMs 对齐，最低 50ms 防止过于频繁解码
+   * 设置解码节流间隔（委托到 ScanDecoder）
    * @param ms - 节流间隔（毫秒），小于50会被自动调整为50
    */
   setDecodeThrottleMs(ms: number): void {
-    this.decodeThrottleMs = Math.max(ms, 50);
+    this.decoder.setDecodeThrottleMs(ms);
   }
 }
