@@ -200,9 +200,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   /**
    * 处理帧扫码结果：委托给 ScanResultProcessor
    * @param result - ScanKit 返回的扫码结果
+   * @param frameHeight - 当前帧的高度，用于坐标转换
    */
-  private onFrameResult(result: scanBarcode.ScanResult): void {
-    this.scanResultProcessor.onFrameResult(result);
+  private onFrameResult(result: scanBarcode.ScanResult, frameHeight: number): void {
+    this.scanResultProcessor.onFrameResult(result, frameHeight);
   }
 
   /**
@@ -216,8 +217,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     if (!service) {
       return;
     }
-    service.onImageArrival((result: scanBarcode.ScanResult) => {
-      this.onFrameResult(result);
+    service.onImageArrival((result: scanBarcode.ScanResult, frameHeight: number) => {
+      this.onFrameResult(result, frameHeight);
     });
     this.isFrameListenerBound = true;
   }
@@ -583,51 +584,41 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 初始化相机预览：解析参数、设置初始缩放和摄像头、刷新预览尺寸
-   * @param call - Flutter 方法调用对象
-   * @param result - 方法结果回调
+   * 从归一化参数中解析并构造 OhosScannerParameters
+   * @param args - 归一化后的参数键值对
+   * @returns 解析后的扫码参数，无有效参数时返回 null
    */
-  private async initCameraPreview(call: MethodCall, result: MethodResult): Promise<void> {
-    // 初始化相机预览
-    if (!this.context) {
-      result.error(PluginError.INIT_CAMERA_ERROR, 'context is undefined!', null);
-      return;
+  private parseScannerParameters(args: Record<string, Object>): OhosScannerParameters | null {
+    if (!args || Object.keys(args).length === 0) {
+      return null;
     }
+    const params: OhosScannerParameters = {};
+    if (args['initialZoom'] !== undefined && args['initialZoom'] !== null) {
+      params.initialZoom = Number(args['initialZoom']);
+    }
+    if (args['initialCamera'] !== undefined && args['initialCamera'] !== null) {
+      const cam = args['initialCamera'] as Record<string, Object>;
+      params.initialCamera = {
+        position: Number(cam['position']),
+        type: Number(cam['type']),
+      };
+    }
+    if (args['initialCropRect'] !== undefined && args['initialCropRect'] !== null) {
+      const rect = args['initialCropRect'] as Record<string, Object>;
+      params.initialCropRect = {
+        scaleWidth: Number(rect['scaleWidth']),
+        scaleHeight: Number(rect['scaleHeight']),
+        offsetX: Number(rect['offsetX']),
+        offsetY: Number(rect['offsetY']),
+      };
+    }
+    return params;
+  }
 
-    if (this.isCameraInitialized) {
-      result.success(true);
-      return;
-    }
-    this.methodResult = result;
-
-    const rawArgsMap: Object = call.args;
-    const args = ArgsParser.normalizeArgs(rawArgsMap);
-    // 逐字段提取并构造 OhosScannerParameters，避免直接类型断言
-    if (args && Object.keys(args).length > 0) {
-      const params: OhosScannerParameters = {};
-      if (args['initialZoom'] !== undefined && args['initialZoom'] !== null) {
-        params.initialZoom = Number(args['initialZoom']);
-      }
-      if (args['initialCamera'] !== undefined && args['initialCamera'] !== null) {
-        const cam = args['initialCamera'] as Record<string, Object>;
-        params.initialCamera = {
-          position: Number(cam['position']),
-          type: Number(cam['type']),
-        };
-      }
-      if (args['initialCropRect'] !== undefined && args['initialCropRect'] !== null) {
-        const rect = args['initialCropRect'] as Record<string, Object>;
-        params.initialCropRect = {
-          scaleWidth: Number(rect['scaleWidth']),
-          scaleHeight: Number(rect['scaleHeight']),
-          offsetX: Number(rect['offsetX']),
-          offsetY: Number(rect['offsetY']),
-        };
-      }
-      this.initialScannerParameters = params;
-    } else {
-      this.initialScannerParameters = null;
-    }
+  /**
+   * 根据解析后的参数设置初始缩放和摄像头
+   */
+  private applyInitialScannerParameters(): void {
     const initialZoom = this.initialScannerParameters?.initialZoom;
     if (initialZoom !== undefined && initialZoom !== null && initialZoom >= 0 && initialZoom <= 1) {
       this.desiredZoom = initialZoom;
@@ -642,6 +633,28 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
           service.findCameraIdByOhosCodes(this.selectedCameraPositionCode, this.selectedCameraTypeCode) ?? '';
       }
     }
+  }
+
+  /**
+   * 初始化相机预览：解析参数、设置初始缩放和摄像头、刷新预览尺寸
+   * @param call - Flutter 方法调用对象
+   * @param result - 方法结果回调
+   */
+  private async initCameraPreview(call: MethodCall, result: MethodResult): Promise<void> {
+    if (!this.context) {
+      result.error(PluginError.INIT_CAMERA_ERROR, 'context is undefined!', null);
+      return;
+    }
+
+    if (this.isCameraInitialized) {
+      result.success(true);
+      return;
+    }
+    this.methodResult = result;
+
+    const args = ArgsParser.normalizeArgs(call.args);
+    this.initialScannerParameters = this.parseScannerParameters(args);
+    this.applyInitialScannerParameters();
     this.refreshPreviewSourceSize();
     this.applyPreviewContainerSize(this.containerSize.width, this.containerSize.height);
 

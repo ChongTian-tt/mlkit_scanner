@@ -115,55 +115,86 @@ export class PluginError {
   static readonly DEVICE_HAS_NOT_ZOOM: string = '6';
 }
 
+/** 鸿蒙扫码器初始化参数，对应 Flutter 侧传入的配置 */
 export interface OhosScannerParameters {
+  /** 初始缩放级别（0~1），未设置时不应用缩放 */
   initialZoom?: number;
+  /** 初始摄像头选择参数，未设置时使用默认后置摄像头 */
   initialCamera?: OhosInitialCamera;
+  /** 扫码框裁剪区域，未设置时全屏可识别 */
   initialCropRect?: CropRect;
 }
 
+/** 鸿蒙摄像头选择参数，按 position + type 组合匹配设备 */
 export interface OhosInitialCamera {
+  /** 相机位置编码（对应 CameraPosition 枚举值） */
   position: number;
+  /** 相机类型编码（对应 CameraType 枚举值） */
   type: number;
 }
 
+/** 扫码框裁剪矩形，相对于预览容器的比例坐标 */
 export interface CropRect {
+  /** 扫码框宽度占容器宽度的比例 (0, 1] */
   scaleWidth: number;
+  /** 扫码框高度占容器高度的比例 (0, 1] */
   scaleHeight: number;
+  /** 扫码框中心点 X 方向偏移 [0, 1)，0.5 为居中 */
   offsetX: number;
+  /** 扫码框中心点 Y 方向偏移 [0, 1)，0.5 为居中 */
   offsetY: number;
 }
 
-// 预览状态机
+/** 预览状态机，跟踪预览流的运行和暂停状态 */
 export interface PreviewState {
+  /** 预览流是否正在运行 */
   isRunning: boolean;
+  /** 是否由用户主动暂停（区别于前后台切换导致的暂停） */
   isPausedByUser: boolean;
 }
 
-// 预览状态机
+/** 通用二维尺寸，用于预览分辨率、容器尺寸等场景 */
 export interface Size {
+  /** 宽度（像素或 vp，取决于上下文） */
   width: number;
+  /** 高度（像素或 vp，取决于上下文） */
   height: number;
 }
 
+/** 鸿蒙摄像头设备信息 */
 export interface OhosCameraItem {
+  /** 相机设备唯一标识 */
   cameraId: string;
+  /** 相机位置编码（对应 CameraPosition 枚举值） */
   position: number;
+  /** 相机类型编码（对应 CameraType 枚举值） */
   type: number;
 }
 
+/** 扫码矩形坐标，用于表示条码在帧中的位置 */
 export interface ScanRectLike {
+  /** 矩形左边界坐标 */
   left: number;
+  /** 矩形上边界坐标 */
   top: number;
+  /** 矩形右边界坐标 */
   right: number;
+  /** 矩形下边界坐标 */
   bottom: number;
 }
 
+/** 二维触点坐标，用于对焦交互 */
 export interface TouchPoint {
+  /** 触点 X 坐标 */
   x: number;
+  /** 触点 Y 坐标 */
   y: number;
 }
 
+/** 触摸事件记录，兼容 ArkTS 触摸回调中 Object 类型的坐标 */
 export interface TouchRecord {
+  /** 触点 X 坐标（可能为 Object 类型，需 Number() 转换） */
   x?: Object;
+  /** 触点 Y 坐标（可能为 Object 类型，需 Number() 转换） */
   y?: Object;
 }

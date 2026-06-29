@@ -539,9 +539,9 @@ export class CameraService {
 
   /**
    * 注册预览帧到达的回调函数（委托到 ScanDecoder）
-   * @param scanCallback - 扫码结果回调，接收 ScanResult 对象
+   * @param scanCallback - 扫码结果回调，接收 ScanResult 对象和帧高度
    */
-  onImageArrival(scanCallback: (result: scanBarcode.ScanResult) => void): void {
+  onImageArrival(scanCallback: (result: scanBarcode.ScanResult, frameHeight: number) => void): void {
     this.decoder.onImageArrival(scanCallback);
   }
 

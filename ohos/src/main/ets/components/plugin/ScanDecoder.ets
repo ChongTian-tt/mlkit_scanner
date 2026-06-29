@@ -129,9 +129,9 @@ export class ScanDecoder {
 
   /**
    * 注册预览帧到达的回调函数，在回调中读取预览帧图像并进行扫码解码
-   * @param scanCallback - 扫码结果回调，接收 ScanResult 对象
+   * @param scanCallback - 扫码结果回调，接收 ScanResult 对象和帧高度
    */
-  onImageArrival(scanCallback: (result: scanBarcode.ScanResult) => void): void {
+  onImageArrival(scanCallback: (result: scanBarcode.ScanResult, frameHeight: number) => void): void {
     // 先取消旧监听器
     this.offImageArrival();
 
@@ -211,9 +211,7 @@ export class ScanDecoder {
       if (detectResult.scanResults.length > 0) {
         const res: scanBarcode.ScanResult = detectResult.scanResults[0];
         if (res && res.originalValue) {
-          const resultMap = res;
-          resultMap['frameHeight'] = height;
-          scanCallback(res);
+          scanCallback(res, height);
         }
       }
     }).catch((error: BusinessError) => {

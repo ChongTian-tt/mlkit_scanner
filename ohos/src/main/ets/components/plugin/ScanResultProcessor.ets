@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-import { JSON } from '@kit.ArkTS';
 import { MethodChannel, Log } from '@ohos/flutter_ohos';
 import { scanBarcode } from '@kit.ScanKit';
 import {
@@ -79,23 +78,6 @@ export class ScanResultProcessor {
   }
 
   /**
-   * 从 ScanResult 中提取未在类型声明中暴露的 frameHeight 属性。
-   * 通过 JSON 序列化/反序列化安全获取，避免类型断言。
-   */
-  extractFrameHeight(result: scanBarcode.ScanResult): number {
-    try {
-      const jsonObj: Record<string, Object> = JSON.parse(JSON.stringify(result)) as Record<string, Object>;
-      const frameHeight = Number(jsonObj['frameHeight']);
-      if (Number.isFinite(frameHeight) && frameHeight > 0) {
-        return Math.round(frameHeight);
-      }
-    } catch (error) {
-      Log.w(TAG, 'extractFrameHeight skipped: ' + JSON.stringify(error));
-    }
-    return 0;
-  }
-
-  /**
    * 从 ScanResult 中提取扫码矩形坐标
    * @param result - 扫码结果
    * @returns 扫码矩形坐标，提取失败时返回 null
@@ -151,8 +133,9 @@ export class ScanResultProcessor {
   /**
    * 处理帧扫码结果：提取坐标、转换为屏幕坐标、判断是否在扫码框内、触发结果回调
    * @param result - ScanKit 返回的扫码结果
+   * @param frameHeight - 当前帧高度，由 ScanDecoder 直接传入，避免通过 JSON 提取
    */
-  onFrameResult(result: scanBarcode.ScanResult): void {
+  onFrameResult(result: scanBarcode.ScanResult, frameHeight: number): void {
     try {
       if (!this.callbacks.getIsScan() || this.callbacks.getIsDelayed()) {
         return;
@@ -162,7 +145,6 @@ export class ScanResultProcessor {
       }
 
       this.callbacks.setOriginalValue(result.originalValue);
-      const frameHeight = this.extractFrameHeight(result);
 
       if (frameHeight > 0) {
         this.callbacks.setYuvFrameHeight(frameHeight);
@@ -261,8 +243,9 @@ export class ScanResultProcessor {
     // 基于条码格式和内容推断 value_type(ScanKit 不提供值类型分类)
     const valueType = this.inferValueType(result.originalValue, mappedFormat);
     // 将扫码解析后的结果回传flutter
-    // 注意：ScanKit 不提供独立的 displayValue，display_value 与 raw_value 相同，
-    // 这是 ScanKit API 限制，与 Android/iOS MLKit 的 displayValue 行为不同
+    // TODO: ScanKit 不提供独立的 displayValue，当前 display_value 与 raw_value 相同。
+    // 这与 Android/iOS MLKit 的 displayValue 行为不同（MLKit 对一维码会返回人类可读文本）。
+    // 若后续 ScanKit API 提供 displayValue 字段，应优先使用。
     this.callbacks.getChannel()?.invokeMethod(PluginConstants.SCAN_RESULT_METHOD, {
       raw_value: result.originalValue,
       display_value: result.originalValue,
