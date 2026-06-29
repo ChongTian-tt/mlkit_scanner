@@ -63,6 +63,13 @@ export class CameraService {
   };
   private preferredPreviewProfileCache: Record<string, camera.Profile> = {};
 
+  /**
+   * 创建 CameraService 实例
+   * @param context - Ability 上下文
+   * @param getSharedFlashStatus - 获取共享闪光灯状态的闭包
+   * @param setSharedFlashStatus - 设置共享闪光灯状态的闭包
+   * @param imgReceiver - 可选的 ImageReceiver 实例，不传则使用默认配置创建
+   */
   constructor(
     context: Context,
     getSharedFlashStatus?: () => boolean,
@@ -78,6 +85,13 @@ export class CameraService {
     this.imageReceiver = this.createImageReceiver(this.previewProfileSize, receiverFormat, receiverCapacity);
   }
 
+  /**
+   * 创建 ImageReceiver 实例
+   * @param size - 预览尺寸
+   * @param format - 图像格式
+   * @param capacity - 缓冲区容量
+   * @returns ImageReceiver 实例
+   */
   private createImageReceiver(size: Size, format: number, capacity: number): image.ImageReceiver {
     const previewSize: camera.Size = {
       width: size.width,
@@ -122,6 +136,11 @@ export class CameraService {
     this.imageReceiverRecreated = true;
   }
 
+  /**
+   * 获取预览 Profile 缓存键
+   * @param cameraId - 可选的相机设备 ID
+   * @returns 缓存键字符串
+   */
   private getPreviewProfileCacheKey(cameraId?: string): string {
     if (cameraId && cameraId.length > 0) {
       return cameraId;
@@ -129,6 +148,11 @@ export class CameraService {
     return PluginConstants.DEFAULT_CAMERA_CACHE_KEY;
   }
 
+  /**
+   * 解析相机设备：按 cameraId 查找，未指定时返回默认相机
+   * @param cameraId - 可选的相机设备 ID
+   * @returns 匹配的 CameraDevice，未找到时返回 undefined
+   */
   private resolveCameraDevice(cameraId?: string): camera.CameraDevice | undefined {
     try {
       if (!this.safeLoadCameras()) {
@@ -147,7 +171,12 @@ export class CameraService {
     return this.camerasDevices[0];
   }
 
-  // 给定 CameraDevice，从 getSupportedOutputCapability 查找首选预览 Profile
+  /**
+   * 给定 CameraDevice，从 getSupportedOutputCapability 查找首选预览 Profile
+   * 优先匹配默认分辨率，未匹配时选择最大分辨率作为 fallback
+   * @param device - 相机设备
+   * @returns 预览 Profile，未找到时返回 undefined
+   */
   private getPreferredPreviewProfile(device: camera.CameraDevice): camera.Profile | undefined {
     const cachedProfile = this.preferredPreviewProfileCache[device.cameraId];
     if (cachedProfile) {
@@ -256,7 +285,10 @@ export class CameraService {
     }
   }
 
-  // 遍历所有 position × type 组合查询相机设备，connectType 使用内置连接
+  /**
+   * 遍历所有 position × type 组合查询相机设备，connectType 使用内置连接
+   * @returns 去重后的相机设备数组
+   */
   private queryAllCameraDevices(): Array<camera.CameraDevice> {
     let allDevices: Array<camera.CameraDevice> = [];
     let knownCameraIds: Set<string> = new Set();
@@ -423,7 +455,10 @@ export class CameraService {
     }
   }
 
-  /** 校验相机模式并获取预览Profile */
+  /**
+   * 校验相机模式并获取预览 Profile
+   * @returns 预览 Profile，不支持拍照模式或未找到 Profile 时返回 null
+   */
   private validateAndGetPreviewProfile(): camera.Profile | null {
     const sceneModes = this.cameraManager!.getSupportedSceneModes(this.currentCameraDevice!);
     const supportPhoto = sceneModes.indexOf(camera.SceneMode.NORMAL_PHOTO) >= 0;
@@ -439,7 +474,11 @@ export class CameraService {
     return previewProfile;
   }
 
-  /** 配置相机会话：创建输入/输出、提交并启动 */
+  /**
+   * 配置相机会话：创建输入/输出、提交并启动
+   * @param previewProfile - 预览 Profile
+   * @param surfaceId - XComponent 渲染表面 ID
+   */
   private async configurePhotoSession(previewProfile: camera.Profile, surfaceId: string): Promise<void> {
     this.previewOutput = this.cameraManager!.createPreviewOutput(previewProfile, surfaceId);
     const imageSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
@@ -456,6 +495,9 @@ export class CameraService {
     await this.photoSession.start();
   }
 
+  /**
+   * 清空会话引用，将会话、输入、输出和设备引用置空
+   */
   private clearSessionRefs(): void {
     this.photoSession = null;
     this.cameraInput = undefined;
@@ -464,6 +506,9 @@ export class CameraService {
     this.currentCameraDevice = undefined;
   }
 
+  /**
+   * 释放会话资源：清空引用后依次释放会话、输入、预览输出
+   */
   private async releaseSessionResources(): Promise<void> {
     const session = this.photoSession;
     const input = this.cameraInput;
@@ -516,6 +561,11 @@ export class CameraService {
     }
   }
 
+  /**
+   * 将数值夹取到 [0, 1] 区间，非有限数值返回 0
+   * @param value - 输入数值
+   * @returns 夹取后的数值
+   */
   private clamp01(value: number): number {
     if (!Number.isFinite(value)) {
       return 0;
@@ -585,7 +635,10 @@ export class CameraService {
     }
   }
 
-  /** 获取闪光灯当前状态，异常时返回上次已知状态 */
+  /**
+   * 获取闪光灯当前状态，异常时返回上次已知状态
+   * @returns 闪光灯是否开启
+   */
   getFlashStatus(): boolean {
     if (!this.photoSession) {
       return this.getSharedFlashStatus();
@@ -726,7 +779,9 @@ export class CameraService {
     }
   }
 
-  /** 停止相机预览 */
+  /**
+   * 停止相机预览，取消 imageArrival 订阅
+   */
   async stopCamera(): Promise<void> {
     try {
       // 停止会话工作，通过注册回调函数获取结果
@@ -753,7 +808,9 @@ export class CameraService {
     }
   }
 
-  /** 释放所有相机资源：取消事件订阅、释放会话、释放ImageReceiver、清空缓存 */
+  /**
+   * 释放所有相机资源：取消事件订阅、释放会话、释放 ImageReceiver、清空缓存
+   */
   async releaseCamera(): Promise<void> {
     try {
       this.isStop = true;
@@ -772,13 +829,17 @@ export class CameraService {
     }
   }
 
-  /** 断开闭包对 MLKitScannerView 的引用，提前解除循环引用链 */
+  /**
+   * 断开闭包对 MLKitScannerView 的引用，提前解除循环引用链
+   */
   clearSharedStateRefs(): void {
     this.getSharedFlashStatus = () => false;
     this.setSharedFlashStatus = (_: boolean) => {};
   }
 
-  // 取消 imageArrival 事件订阅，防止回调在释放后触发和循环引用
+  /**
+   * 取消 imageArrival 事件订阅，防止回调在释放后触发和循环引用
+   */
   offImageArrival(): void {
     if (this.imageArrivalCallback) {
       try {
@@ -790,7 +851,10 @@ export class CameraService {
     }
   }
 
-  // 注册预览帧到达的回调函数，在回调中读取预览帧图像并进行扫码解码
+  /**
+   * 注册预览帧到达的回调函数，在回调中读取预览帧图像并进行扫码解码
+   * @param scanCallback - 扫码结果回调，接收 ScanResult 对象
+   */
   onImageArrival(scanCallback: (result: scanBarcode.ScanResult) => void): void {
     // 先取消旧监听器
     this.offImageArrival();

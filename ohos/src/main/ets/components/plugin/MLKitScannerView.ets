@@ -92,6 +92,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   private isFrameListenerBound: boolean = false;
   private isPreviewStarting: boolean = false;
 
+  /**
+   * 创建 MLKitScannerView 实例，初始化 MethodChannel 和 CameraService
+   * @param context - Ability 上下文
+   * @param messenger - Flutter 二进制消息通道
+   * @param viewId - 平台视图 ID
+   * @param args - Flutter 传入的初始化参数
+   */
   constructor(context: common.Context, messenger: BinaryMessenger, viewId: number, args: Object) {
     super();
     flutterMLKitScannerView = this;
@@ -103,6 +110,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.cameraService = this.createCameraService();
   }
 
+  /**
+   * 创建 CameraService 实例，注入闪光灯状态读写闭包
+   * @returns CameraService 实例，context 不可用时返回 null
+   */
   private createCameraService(): CameraService | null {
     if (!this.context) {
       return null;
@@ -117,6 +128,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     );
   }
 
+  /**
+   * 获取 CameraService 实例，懒创建
+   * @returns CameraService 实例，创建失败时返回 null
+   */
   private getCameraService(): CameraService | null {
     if (!this.cameraService) {
       this.cameraService = this.createCameraService();
@@ -124,7 +139,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return this.cameraService;
   }
 
-  // 调整预览源尺寸,以适配 ScanKit 的宽高比要求,通常是竖屏扫码 9:16
+  /**
+   * 调整预览源尺寸，以适配 ScanKit 的宽高比要求（通常是竖屏扫码 9:16）
+   * @param size - 原始预览源尺寸
+   * @returns 调整后的尺寸，宽小于高时原样返回，宽大于高时交换宽高
+   */
   private normalizePreviewSourceSizeForDisplay(size: Size): Size {
     if (size.width <= 0 || size.height <= 0) {
       return size;
@@ -138,7 +157,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return size;
   }
 
-  // 刷新预览源尺寸并触发预览尺寸更新流程,通常在初始化和切换摄像头后调用
+  /**
+   * 刷新预览源尺寸并触发预览尺寸更新流程，通常在初始化和切换摄像头后调用
+   */
   private refreshPreviewSourceSize(): void {
     const service = this.getCameraService();
     const nextSize = service?.getPreferredPreviewSize(this.selectedCameraId) ?? null;
@@ -184,6 +205,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return 0;
   }
 
+  /**
+   * 从 ScanResult 中提取扫码矩形坐标
+   * @param result - 扫码结果
+   * @returns 扫码矩形坐标，提取失败时返回 null
+   */
   private extractScanRect(result: scanBarcode.ScanResult): ScanRectLike | null {
     try {
       const rec = this.scanResultToRecord(result);
@@ -211,7 +237,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  // 中心区域扫码框,作为扫码结果坐标缺失时的兜底方案
+  /**
+   * 中心区域扫码框，作为扫码结果坐标缺失时的兜底方案
+   * @returns 预览区域中心 30% 范围的矩形坐标
+   */
   private fallbackCenterRect(): ScanRectLike {
     const w = this.previewSize.width > 0 ? this.previewSize.width : this.containerSize.width;
     const h = this.previewSize.height > 0 ? this.previewSize.height : this.containerSize.height;
@@ -227,6 +256,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     } as ScanRectLike;
   }
 
+  /**
+   * 处理帧扫码结果：提取坐标、转换为屏幕坐标、判断是否在扫码框内、触发结果回调
+   * @param result - ScanKit 返回的扫码结果
+   */
   private onFrameResult(result: scanBarcode.ScanResult): void {
     try {
       if (!this.isScan || this.isDelayed) {
@@ -278,6 +311,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 绑定帧监听器到 ImageReceiver，仅在未绑定时执行绑定
+   */
   private bindFrameListener(): void {
     if (this.isFrameListenerBound) {
       return;
@@ -419,7 +455,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  // 绘制扫码框遮罩,扫码框大小和位置由 cropRect 决定
+  /**
+   * 应用预览容器尺寸，计算居中裁剪后的预览尺寸
+   * @param width - 容器宽度
+   * @param height - 容器高度
+   * @returns 预览尺寸是否发生变化
+   */
   private applyPreviewContainerSize(width: number, height: number): boolean {
     this.containerSize = { width, height };
     const next = this.calcPreviewSizeAspectCover(width, height);
@@ -428,6 +469,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return sizeChanged;
   }
 
+  /**
+   * 布局变化后重启预览：释放旧会话、重新启动预览并应用缩放
+   */
   private async restartPreviewAfterLayoutChange(): Promise<void> {
     if (!this.surfaceId || !this.isCameraInitialized) {
       return;
@@ -466,13 +510,17 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  // 开启扫描
+  /**
+   * 开启扫描会话，标记扫描状态为活跃
+   */
   private beginScanSession(): void {
     this.isScan = true;
     getCurrentCameraPreviewComponent()?.setScanActive(true);
   }
 
-  // 取消扫描
+  /**
+   * 结束扫描会话，标记扫描状态为非活跃
+   */
   private endScanSession(): void {
     this.isScan = false;
     getCurrentCameraPreviewComponent()?.setScanActive(false);
@@ -483,7 +531,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.previewState.isRunning = true;
   }
 
-  // 取消预览流
+  /**
+   * 结束预览会话，标记预览状态为非运行
+   */
   private endPreviewSession(): void {
     this.previewState.isRunning = false;
   }
@@ -515,7 +565,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  // 解析正数尺寸
+  /**
+   * 解析正数尺寸参数
+   * @param args - 包含 width 和 height 字段的键值对
+   * @returns 有效的正数尺寸，参数无效时返回 null
+   */
   private parsePositiveSize(args: Record<string, Object>): Size | null {
     const width = Number(args['width']);
     const height = Number(args['height']);
@@ -551,6 +605,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return { width, height };
   }
 
+  /**
+   * 解析预览尺寸参数，计算居中裁剪后的实际预览尺寸
+   * @param args - Flutter 传入的初始化参数
+   * @returns 计算后的预览尺寸
+   */
   private parsePreviewSize(args: Object): Size {
     const raw = this.parsePositiveSize(this.normalizeArgs(args));
     if (!raw) {
@@ -561,6 +620,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return this.calcPreviewSizeAspectCover(raw.width, raw.height);
   }
 
+  /**
+   * 清除扫描延迟定时器，重置延迟标志
+   */
   private clearScanDelayTimer(): void {
     if (this.scanDelayTimerId >= 0) {
       clearTimeout(this.scanDelayTimerId);
@@ -569,7 +631,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.isDelayed = false;
   }
 
-  // 在延迟窗口期间阻止结果输出
+  /**
+   * 启动扫描延迟窗口，在延迟期间阻止结果输出
+   */
   private startScanDelayWindow(): void {
     this.clearScanDelayTimer();
     if (this.scanDelayMs <= 0) {
@@ -582,7 +646,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }, this.scanDelayMs) as number;
   }
 
-  // 暂停预览流
+  /**
+   * 暂停预览流：停止相机并重置帧监听绑定标志
+   */
   private async pausePreviewFlow(): Promise<void> {
     if (!this.previewState.isRunning && !this.isScan) {
       return;
@@ -599,7 +665,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  // 开启预览流,恢复闪光灯状态
+  /**
+   * 恢复预览流：启动预览、应用缩放并恢复闪光灯状态
+   */
   private async resumePreviewFlow(): Promise<void> {
     // 预览流是开启状态
     if (this.previewState.isRunning) {
@@ -619,10 +687,19 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 获取当前活跃的裁剪矩形
+   * @returns 裁剪矩形，未设置时返回 null
+   */
   private getActiveCropRect(): CropRect | null {
     return this.initialScannerParameters?.initialCropRect ?? null;
   }
 
+  /**
+   * 从 ScanResult 中提取扫码类型编码
+   * @param result - 扫码结果
+   * @returns 扫码类型编码，提取失败时返回 0
+   */
   private extractScanType(result: scanBarcode.ScanResult): number {
     const resultMap = this.scanResultToRecord(result);
     const scanType = Number(resultMap['scanType']);
@@ -657,6 +734,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return PluginConstants.BARCODE_FORMAT_TO_VALUE_TYPE[format] ?? 0;
   }
 
+  /**
+   * 将扫码结果通过 MethodChannel 回传给 Flutter
+   * @param result - ScanKit 返回的扫码结果
+   */
   private emitScanResult(result: scanBarcode.ScanResult): void {
     const scanType = this.extractScanType(result);
     // 将 ScanKit scanType 转换为 MLKit BarcodeFormat 码
@@ -674,6 +755,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     });
   }
 
+  /**
+   * 启动相机预览：创建相机设备、初始化相机会话、绑定帧监听并应用缩放
+   */
   private async startPreview(): Promise<void> {
     if (!this.isCameraInitialized || !this.surfaceId || this.previewState.isPausedByUser) {
       Log.w(
@@ -787,6 +871,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     };
   }
 
+  /**
+   * 初始化相机预览：解析参数、设置初始缩放和摄像头、刷新预览尺寸
+   * @param call - Flutter 方法调用对象
+   * @param result - 方法结果回调
+   */
   private async initCameraPreview(call: MethodCall, result: MethodResult): Promise<void> {
     // 初始化相机预览
     if (!this.context) {
@@ -892,6 +981,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return converted;
   }
 
+  /**
+   * 执行扫码资源释放：断开闭包引用并释放相机
+   */
   private async runDisposeScanRelease(): Promise<void> {
     const service = this.cameraService;
     this.cameraService = null;
@@ -908,6 +1000,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 销毁后保底状态清理，避免重复进入销毁流程后状态残留
+   */
   private resetStateAfterDispose(): void {
     // 保底状态清理,避免重复进入销毁流程后状态残留
     this.clearScanDelayTimer();
@@ -925,6 +1020,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     this.methodResult = null;
   }
 
+  /**
+   * 释放扫码资源：重置状态并释放相机服务，确保同一时间只有一个释放流程运行
+   */
   private async disposeScanResources(): Promise<void> {
     if (this.disposePromise) {
       await this.disposePromise;
@@ -943,12 +1041,19 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 断开 MethodChannel 处理器，停止接收 Flutter 调用
+   */
   private detachChannelHandler(): void {
     if (this.channel != null) {
       this.channel.setMethodCallHandler(null);
     }
   }
 
+  /**
+   * 处理 dispose 调用：释放扫码资源并断开通道
+   * @param result - 方法结果回调
+   */
   private async disposeHandle(result: MethodResult): Promise<void> {
     try {
       await this.disposeScanResources();
@@ -960,6 +1065,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 切换闪光灯状态：根据当前状态决定开启或关闭
+   * @param result - 方法结果回调，不支持闪光灯时返回错误码 '4'
+   */
   private toggleFlash(result: MethodResult): void {
     // 切换闪光灯
     if (!this.isCameraInitialized) {
@@ -994,7 +1103,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  // 开启扫描,开启预览流
+  /**
+   * 开启扫描并启动预览流
+   * @param call - Flutter 方法调用对象，包含扫码参数
+   * @param result - 方法结果回调
+   */
   private async startScan(call: MethodCall, result: MethodResult): Promise<void> {
     const args = this.normalizeArgs(call.args);
     let options: MLKitScannerOptions;
@@ -1043,7 +1156,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     result.success(true);
   }
 
-  // 取消扫描,保持预览
+  /**
+   * 取消扫描，保持预览流继续运行
+   * @param result - 方法结果回调
+   */
   private async cancelScan(result: MethodResult): Promise<void> {
     try {
       this.clearScanDelayTimer();
@@ -1067,6 +1183,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 设置扫描延迟间隔
+   * @param call - Flutter 方法调用对象，参数为延迟毫秒数
+   * @param result - 方法结果回调
+   */
   private setScanDelay(call: MethodCall, result: MethodResult): void {
     // 设置扫描延迟
     const delay: Object = call.args;
@@ -1094,7 +1215,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     result.success(true);
   }
 
-  // 更新预览约束,如果新的预览尺寸与当前相同则直接返回成功,否则更新预览尺寸并应用新的约束,如果相机未初始化则返回错误
+  /**
+   * 更新预览约束：解析尺寸参数并重新计算预览尺寸和裁剪区域
+   * @param call - Flutter 方法调用对象，包含 width/height 参数
+   * @param result - 方法结果回调
+   */
   private updateConstraints(call: MethodCall, result: MethodResult): void {
     try {
       const args = this.normalizeArgs(call.args);
@@ -1124,6 +1249,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 暂停相机：关闭闪光灯、标记用户暂停状态、停止预览流
+   * @param result - 方法结果回调
+   */
   private async pauseCamera(result: MethodResult): Promise<void> {
     try {
       // 暂停相机
@@ -1175,6 +1304,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 安全获取闪光灯状态，异常时返回上次已知状态
+   * @returns 闪光灯是否开启
+   */
   private getFlashLightStatusSafely(): boolean {
     let flashLightStatus: boolean = this.flashLightStatus;
     try {
@@ -1190,6 +1323,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return flashLightStatus;
   }
 
+  /**
+   * 安全关闭闪光灯，异常时仅记录日志
+   */
   private closeFlashLightSafely(): void {
     try {
       const service = this.getCameraService();
@@ -1200,6 +1336,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 安全开启闪光灯，异常时仅记录日志
+   */
   private openFlashLightSafely(): void {
     try {
       const service = this.getCameraService();
@@ -1210,6 +1349,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 宿主应用进入后台时调用，暂停相机预览并释放相关资源
+   */
   public async onHostBackground(): Promise<void> {
     if (!this.isCameraInitialized) {
       return;
@@ -1237,6 +1379,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 宿主应用回到前台时调用，恢复相机预览和闪光灯状态
+   */
   public async onHostForeground(): Promise<void> {
     if (!this.isCameraInitialized || !this.surfaceId) {
       return;
@@ -1257,6 +1402,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 解析缩放值参数
+   * @param args - 缩放参数
+   * @returns 有效的缩放数值，无效时返回 null
+   */
   private parseZoomValue(args: Object): number | null {
     if (args === null || args === undefined) {
       return null;
@@ -1288,6 +1438,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 设置缩放值：验证参数范围并应用
+   * @param call - Flutter 方法调用对象，参数为 0~1 归一化缩放值
+   * @param result - 方法结果回调
+   */
   private setZoom(call: MethodCall, result: MethodResult): void {
     if (!this.isCameraInitialized) {
       result.error(
@@ -1322,7 +1477,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     result.error(PluginError.DEVICE_HAS_NOT_ZOOM, 'Zoom is not supported on this device', null);
   }
 
-  // 设置扫描区域
+  /**
+   * 设置扫描区域：校验参数范围并更新裁剪矩形
+   * @param call - Flutter 方法调用对象，包含 scaleWidth/scaleHeight/offsetX/offsetY 参数
+   * @param result - 方法结果回调
+   */
   private setCropArea(call: MethodCall, result: MethodResult): void {
     const rawArgsMap: Object = call.args;
     const args = this.normalizeArgs(rawArgsMap);
@@ -1361,6 +1520,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     result.success(true);
   }
 
+  /**
+   * 获取可用的鸿蒙摄像头列表
+   * @param result - 方法结果回调，返回包含 position 和 type 的数组
+   */
   private getOhosAvailableCameras(result: MethodResult): void {
     if (!this.context) {
       result.error(PluginError.INIT_CAMERA_ERROR, 'context is undefined!', null);
@@ -1390,7 +1553,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
-  /** 校验 setOhosCamera 的参数，无效时返回 null 并通过 result 报错 */
+  /**
+   * 校验 setOhosCamera 的参数，无效时返回 null 并通过 result 报错
+   * @param args - 包含 position 和 type 的键值对
+   * @param result - 方法结果回调
+   * @returns 校验通过的 OhosInitialCamera，无效时返回 null
+   */
   private validateSetOhosCameraArgs(args: Record<string, Object>, result: MethodResult): OhosInitialCamera | null {
     const position = Number(args['position']);
     const type = Number(args['type']);
@@ -1407,7 +1575,13 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     return { position: Math.trunc(position), type: Math.trunc(type) } as OhosInitialCamera;
   }
 
-  /** 通过 CameraService 查找目标 cameraId，找不到时返回空串 */
+  /**
+   * 通过 CameraService 查找目标 cameraId，找不到时返回空串
+   * @param reqPosition - 请求的摄像头位置编码
+   * @param reqType - 请求的摄像头类型编码
+   * @param result - 方法结果回调
+   * @returns 匹配的 cameraId，未找到时返回空串
+   */
   private queryCameraIdForSwitch(reqPosition: number, reqType: number, result: MethodResult): string {
     try {
       const service = this.getCameraService();
@@ -1434,6 +1608,11 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
   }
 
+  /**
+   * 切换鸿蒙摄像头：校验参数、查找目标摄像头、必要时重启预览
+   * @param call - Flutter 方法调用对象，包含 position 和 type 参数
+   * @param result - 方法结果回调
+   */
   private setOhosCamera(call: MethodCall, result: MethodResult): void {
     const args = this.normalizeArgs(call.args);
     const validated = this.validateSetOhosCameraArgs(args, result);
@@ -1459,7 +1638,9 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     result.success(true);
   }
 
-  /** 释放所有资源,等待异步释放完成后再返回 */
+  /**
+   * 释放所有资源，等待异步释放完成后再返回
+   */
   async dispose(): Promise<void> {
     await this.disposeScanResources();
     this.detachChannelHandler();
@@ -1467,6 +1648,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 }
 
+/**
+ * 相机预览 UI 构建器，创建 CameraPreviewComponent 实例
+ * @param params - 平台视图参数，包含 MLKitScannerView 引用
+ */
 @Builder
 function CameraPreviewBuilder(params: Params): void {
   CameraPreviewComponent({
@@ -1474,6 +1659,10 @@ function CameraPreviewBuilder(params: Params): void {
   });
 }
 
+/**
+ * 获取当前 MLKitScannerView 实例
+ * @returns MLKitScannerView 实例，未初始化时返回 null
+ */
 export function getCurrentMLKitScannerView(): MLKitScannerView | null {
   if (flutterMLKitScannerView) {
     return flutterMLKitScannerView;

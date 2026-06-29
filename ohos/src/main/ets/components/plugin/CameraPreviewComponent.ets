@@ -161,6 +161,9 @@ export struct CameraPreviewComponent {
     }
   }
 
+  /**
+   * 构建相机预览组件：包含 XComponent、扫描遮罩、对焦环和锁定图标
+   */
   build() {
     Stack() {
       if (this.flutterMLKitScannerView && this.canRenderCamera) {
@@ -186,6 +189,9 @@ export struct CameraPreviewComponent {
     })
   }
 
+  /**
+   * 组件即将显示时回调：注册生命周期监听并触发相机预览初始化
+   */
   async aboutToAppear(): Promise<void> {
     currentCameraPreview = this;
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
@@ -198,13 +204,16 @@ export struct CameraPreviewComponent {
     }
   }
 
+  /**
+   * 组件即将消失时回调：清理定时器、重置动画状态并注销生命周期监听
+   */
   aboutToDisappear(): void {
     currentCameraPreview = null;
     this.isScanKitInitialized = false;
     this.clearLongPressTimer();
     this.resetFocusRingAnimationState();
     this.resetLockIconAnimationState();
-    this.unRegisterLifecycle();
+    this.unregisterLifecycle();
   }
 
   /**
@@ -231,6 +240,9 @@ export struct CameraPreviewComponent {
     return this.isActive;
   }
 
+  /**
+   * XComponent 加载完成回调：获取 SurfaceId 并尝试初始化 ScanKit
+   */
   private async onLoadHandle(): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (this.flutterMLKitScannerView) {
@@ -244,6 +256,9 @@ export struct CameraPreviewComponent {
     }
   }
 
+  /**
+   * 注册 Ability 生命周期回调，监听前后台切换事件
+   */
   private registerLifecycle() {
     if (this.lifecycleId >= 0) {
       return;
@@ -285,7 +300,10 @@ export struct CameraPreviewComponent {
     }
   }
 
-  private unRegisterLifecycle() {
+  /**
+   * 注销 Ability 生命周期回调
+   */
+  private unregisterLifecycle() {
     if (this.lifecycleId < 0) {
       return;
     }
@@ -297,6 +315,10 @@ export struct CameraPreviewComponent {
     this.lifecycleId = -1;
   }
 
+  /**
+   * 刷新相机权限状态，同步更新 flutterMLKitScannerView 的 userGrant 标志
+   * @param scene - 调用场景标识，用于日志追踪
+   */
   private async refreshPermissionState(scene: string): Promise<void> {
     this.hasPermission =
       await PermissionsUtil.checkAndRequestCameraPermission(this.context, PluginConstants.PERMISSION_NAME);
@@ -333,6 +355,10 @@ export struct CameraPreviewComponent {
     await this.tryInitScanKit('initCameraPreview');
   }
 
+  /**
+   * 尝试初始化 ScanKit 扫码引擎，检查前置条件后设置相机初始化状态
+   * @param scene - 调用场景标识，用于日志追踪
+   */
   private async tryInitScanKit(scene: string): Promise<void> {
     this.flutterMLKitScannerView = getCurrentMLKitScannerView();
     if (!this.flutterMLKitScannerView || !this.surfaceId || !this.hasPermission) {
@@ -397,7 +423,10 @@ export struct CameraPreviewComponent {
     }
   }
 
-  // 获取预览容器尺寸，优先使用实际容器尺寸，回退到预设预览尺寸，如果都不可用则返回 null
+  /**
+   * 获取预览容器尺寸，优先使用实际容器尺寸，回退到预设预览尺寸
+   * @returns 容器尺寸，都不可用时返回 null
+   */
   private getViewportSize(): Size | null {
     const container = this.flutterMLKitScannerView?.getContainerSize();
     if (container && container.width > 0 && container.height > 0) {
@@ -412,7 +441,9 @@ export struct CameraPreviewComponent {
     return null;
   }
 
-  // 刷新对焦相关的几何状态，包括对焦中心坐标、对焦环位置、预览中的对焦点坐标，以及锁定图标的起始和结束位置
+  /**
+   * 刷新对焦相关的几何状态：对焦中心坐标、对焦环位置、预览中的对焦点坐标、锁定图标起止位置
+   */
   private refreshFocusGeometry(): void {
     const viewport = this.getViewportSize();
     if (!viewport) {
@@ -461,11 +492,16 @@ export struct CameraPreviewComponent {
     this.refreshFocusRingDisplayState();
   }
 
+  /**
+   * 刷新对焦环显示状态，根据对焦状态和对焦中心坐标决定是否显示
+   */
   private refreshFocusRingDisplayState(): void {
     this.showFocusRingState = this.showFocusState && this.focusCenterState !== null;
   }
 
-  // 同步锁定图标位置
+  /**
+   * 同步锁定图标位置，根据动画阶段选择起始或目标位置
+   */
   private syncLockIconGeometry(): void {
     if (!this.showLockIconState) {
       return;
@@ -543,6 +579,9 @@ export struct CameraPreviewComponent {
     }
   }
 
+  /**
+   * 清除长按计时器
+   */
   private clearLongPressTimer(): void {
     if (this.longPressTimerId >= 0) {
       clearTimeout(this.longPressTimerId);
@@ -550,7 +589,9 @@ export struct CameraPreviewComponent {
     }
   }
 
-  // 启动长按计时器，在达到长按阈值后触发锁定对焦逻辑，并更新状态以显示锁定动画
+  /**
+   * 启动长按计时器，在达到长按阈值后触发锁定对焦逻辑
+   */
   private startLongPressTimer(): void {
     this.clearLongPressTimer();
     this.longPressTimerId = setTimeout(() => {
@@ -575,6 +616,9 @@ export struct CameraPreviewComponent {
     }, PluginConstants.LONG_PRESS_THRESHOLD_MS) as number;
   }
 
+  /**
+   * 重置对焦环动画状态，自增序列号使旧动画回调失效
+   */
   private resetFocusRingAnimationState(): void {
     // 每次重置都自增动画序列号，确保过期动画回调不再修改状态
     this.focusRingAnimationSeq++;
@@ -678,7 +722,9 @@ export struct CameraPreviewComponent {
     });
   }
 
-  // 播放锁焦图标退场动画：将当前锁图标淡出并隐藏，同时把位置复位到起始点，便于下次重新播放入场动画。
+  /**
+   * 播放锁焦图标退场动画：淡出并隐藏，同时把位置复位到起始点
+   */
   private fadeOutLockIcon(): void {
     const animationSeq = ++this.lockAnimationSeq;
     this.isLockIconSettledState = false;
@@ -710,7 +756,10 @@ export struct CameraPreviewComponent {
     });
   }
 
-  // 更新对焦提示状态，根据是否需要锁定切换对焦环和锁定图标的显示，并启动相应动画
+  /**
+   * 更新对焦提示状态：根据是否需要锁定切换对焦环和锁定图标的显示，并启动相应动画
+   * @param needLock - 是否需要锁定焦点（长按为 true，轻触为 false）
+   */
   private updateFocusHint(needLock: boolean): void {
     this.startFocusRingAnim();
     const isAlreadyLocked =
@@ -729,6 +778,9 @@ export struct CameraPreviewComponent {
     }
   }
 
+  /**
+   * 重置锁定图标动画状态，自增序列号使旧动画回调失效
+   */
   private resetLockIconAnimationState(): void {
     this.lockAnimationSeq++;
     this.showLockIconState = false;
@@ -740,7 +792,11 @@ export struct CameraPreviewComponent {
     }
   }
 
-  // 将触点坐标转换为预览坐标（考虑 offset 和边界）
+  /**
+   * 将触点坐标转换为预览坐标（考虑 offset 偏移和边界裁剪）
+   * @param point - 原始触点坐标
+   * @returns 预览坐标，坐标非有限时返回 null
+   */
   private toPreviewPoint(point: TouchPoint): TouchPoint | null {
     const px = point.x - this.offsetX;
     const py = point.y - this.offsetY;
@@ -758,11 +814,19 @@ export struct CameraPreviewComponent {
   }
 }
 
+/**
+ * 获取当前 CameraPreviewComponent 实例
+ * @returns CameraPreviewComponent 实例，组件未挂载时返回 null
+ */
 export function getCurrentCameraPreviewComponent(): CameraPreviewComponent | null {
   return currentCameraPreview;
 }
 
-// 解析 Area 维度，支持 number 或字符串形式的数字，返回有效的数值或 0
+/**
+ * 解析 Area 维度，支持 number 或字符串形式的数字
+ * @param value - Area 维度值
+ * @returns 有效的数值，无效时返回 0
+ */
 function parseAreaDimension(value: Length | undefined): number {
   if (value === undefined) {
     return 0;
@@ -774,7 +838,11 @@ function parseAreaDimension(value: Length | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// 从 Area 变化事件中提取新的宽高，返回 Size 对象
+/**
+ * 从 Area 变化事件中提取新的宽高
+ * @param newValue - Area 变化后的值
+ * @returns 包含 width 和 height 的 Size 对象
+ */
 function readOnAreaChangeSize(newValue: Area): Size {
   return {
     width: parseAreaDimension(newValue.width),
@@ -782,13 +850,21 @@ function readOnAreaChangeSize(newValue: Area): Size {
   };
 }
 
-// 解析触摸事件类型，返回标准化的触摸类型常量，未识别时返回 -1
+/**
+ * 解析触摸事件类型，返回标准化的触摸类型常量
+ * @param eventObj - 触摸事件对象
+ * @returns 触摸类型常量，未识别时返回 -1
+ */
 function readTouchType(eventObj: TouchEvent): number {
   const type = Number(eventObj.type);
   return Number.isFinite(type) ? Math.trunc(type) : -1;
 }
 
-// 解析触摸事件中的第一个触点坐标，返回 TouchPoint 对象或 null
+/**
+ * 解析触摸事件中的第一个触点坐标
+ * @param eventObj - 触摸事件对象
+ * @returns 触点坐标，无触点或坐标无效时返回 null
+ */
 function readTouchPoint(eventObj: TouchEvent): TouchPoint | null {
   if (!eventObj.touches) {
     return null;

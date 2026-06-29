@@ -28,6 +28,9 @@ export struct ScannerOverlay {
   @Prop @Watch('onPropChange') isActive: boolean = false;
   private isCanvasReady: boolean = false;
 
+  /**
+   * 属性变化回调，当 cropRect 或 isActive 变化时触发重绘
+   */
   onPropChange(): void {
     if (this.isCanvasReady) {
       this.context.invalidate();
@@ -115,6 +118,9 @@ export struct ScannerOverlay {
     return path;
   }
 
+  /**
+   * 执行绘制：先绘制半透明背景遮罩，再绘制角落边框
+   */
   private onDraw(): void {
     try {
       const canvas = this.context.canvas;
@@ -173,6 +179,9 @@ export struct ScannerOverlay {
     }
   }
 
+  /**
+   * 构建遮罩组件：创建 Canvas 并绑定就绪和区域变化事件
+   */
   build() {
     Canvas(this.context)
       .width('100%')

@@ -20,6 +20,10 @@ import { MLKitScannerView } from './MLKitScannerView';
 export class CameraPreviewFactory extends PlatformViewFactory {
   private messenger: BinaryMessenger;
 
+  /**
+   * 创建 CameraPreviewFactory 实例
+   * @param messenger - Flutter 二进制消息通道，用于 MethodChannel 通信
+   */
   constructor(messenger: BinaryMessenger) {
     super(StandardMessageCodec.INSTANCE);
     this.messenger = messenger;
