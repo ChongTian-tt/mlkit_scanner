@@ -149,12 +149,39 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
   }
 
   /**
-   * 将 ScanResult 转换为 Record<string, Object> 以访问未在类型声明中暴露的属性。
+   * 将 ScanResult 中需要的属性逐个提取到 Record<string, Object>。
    * ScanResult 实际运行时属性：
    * scanType, originalValue, scanCodeRect, cornerPoints, isGS1, frameHeight
    */
   private scanResultToRecord(result: scanBarcode.ScanResult): Record<string, Object> {
-    return result as ESObject as Record<string, Object>;
+    const record: Record<string, Object> = {};
+    // 逐个提取类型声明中已暴露的属性，避免 ESObject / 类型断言
+    record['scanType'] = result.scanType;
+    record['originalValue'] = result.originalValue;
+    if (result.scanCodeRect !== undefined) {
+      record['scanCodeRect'] = result.scanCodeRect;
+    }
+    if (result.cornerPoints !== undefined) {
+      record['cornerPoints'] = result.cornerPoints;
+    }
+    return record;
+  }
+
+  /**
+   * 从 ScanResult 中提取未在类型声明中暴露的 frameHeight 属性。
+   * 通过 JSON 序列化/反序列化安全获取，避免类型断言。
+   */
+  private extractFrameHeight(result: scanBarcode.ScanResult): number {
+    try {
+      const jsonObj: Record<string, Object> = JSON.parse(JSON.stringify(result)) as Record<string, Object>;
+      const frameHeight = Number(jsonObj['frameHeight']);
+      if (Number.isFinite(frameHeight) && frameHeight > 0) {
+        return Math.round(frameHeight);
+      }
+    } catch (error) {
+      Log.w(TAG, 'extractFrameHeight skipped: ' + JSON.stringify(error));
+    }
+    return 0;
   }
 
   private extractScanRect(result: scanBarcode.ScanResult): ScanRectLike | null {
@@ -210,10 +237,10 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
       }
 
       this.originalValue = result.originalValue;
-      const resultMap = this.scanResultToRecord(result);
-      const frameHeight = Number(resultMap['frameHeight']);
-      if (Number.isFinite(frameHeight) && frameHeight > 0) {
-        this.yuvFrameHeight = Math.round(frameHeight);
+      const frameHeight = this.extractFrameHeight(result);
+
+      if (frameHeight > 0) {
+        this.yuvFrameHeight = frameHeight;
       }
       const rectLikeRaw = this.extractScanRect(result);
       const candidates: scanBarcode.ScanCodeRect[] = [];
@@ -474,7 +501,8 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
       if (typeof (rawArgs as Record<string, Object>)['forEach'] === 'function') {
         const args: Record<string, Object> = {};
-        (rawArgs as ESObject).forEach((value: ESObject, key: string) => {
+        const rawMap = rawArgs as Map<string, Object>;
+        rawMap.forEach((value: Object, key: string) => {
           args[key] = this.recursivelyConvertMap(value);
         });
         return args;
@@ -774,7 +802,32 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
 
     const rawArgsMap: Object = call.args;
     const args = this.normalizeArgs(rawArgsMap);
-    this.initialScannerParameters = (args && (args as OhosScannerParameters)) || null;
+    // 逐字段提取并构造 OhosScannerParameters，避免直接类型断言
+    if (args && Object.keys(args).length > 0) {
+      const params: OhosScannerParameters = {};
+      if (args['initialZoom'] !== undefined && args['initialZoom'] !== null) {
+        params.initialZoom = Number(args['initialZoom']);
+      }
+      if (args['initialCamera'] !== undefined && args['initialCamera'] !== null) {
+        const cam = args['initialCamera'] as Record<string, Object>;
+        params.initialCamera = {
+          position: Number(cam['position']),
+          type: Number(cam['type']),
+        };
+      }
+      if (args['initialCropRect'] !== undefined && args['initialCropRect'] !== null) {
+        const rect = args['initialCropRect'] as Record<string, Object>;
+        params.initialCropRect = {
+          scaleWidth: Number(rect['scaleWidth']),
+          scaleHeight: Number(rect['scaleHeight']),
+          offsetX: Number(rect['offsetX']),
+          offsetY: Number(rect['offsetY']),
+        };
+      }
+      this.initialScannerParameters = params;
+    } else {
+      this.initialScannerParameters = null;
+    }
     const initialZoom = this.initialScannerParameters?.initialZoom;
     if (initialZoom !== undefined && initialZoom !== null && initialZoom >= 0 && initialZoom <= 1) {
       this.desiredZoom = initialZoom;
@@ -818,10 +871,12 @@ export class MLKitScannerView extends PlatformView implements MethodCallHandler 
     }
 
     // 检查是否是 Map 对象(有 forEach 方法但不是数组)
+    // Map 对象需要通过 forEach 遍历，Object.keys() 无法枚举 Map 的键
     const objRecord = obj as Record<string, Object>;
     if (typeof objRecord['forEach'] === 'function') {
       const converted: Record<string, Object> = {};
-      (obj as ESObject).forEach((value: ESObject, key: string) => {
+      const objMap = obj as Map<string, Object>;
+      objMap.forEach((value: Object, key: string) => {
         converted[key] = this.recursivelyConvertMap(value);
       });
       return converted;
