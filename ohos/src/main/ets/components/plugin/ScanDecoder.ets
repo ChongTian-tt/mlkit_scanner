@@ -184,7 +184,7 @@ export class ScanDecoder {
     imgComponent: image.Component,
     width: number,
     height: number,
-    scanCallback: (result: scanBarcode.ScanResult) => void,
+    scanCallback: (result: scanBarcode.ScanResult, frameHeight: number) => void,
     nextImage: image.Image
   ): Promise<void> {
     const now = Date.now();
